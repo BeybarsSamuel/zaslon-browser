@@ -73,6 +73,11 @@ body.electron #tabs .tab,body.electron #tabs .ib,body.electron #newtab{-webkit-a
 #torBtn.on{color:var(--ok);background:color-mix(in srgb,var(--ok) 18%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--ok) 35%,transparent)}
 #torBtn.starting{color:var(--warn);background:color-mix(in srgb,var(--warn) 16%,transparent)}
 #torBadge:empty{display:none}
+#idModeBtn{width:auto;min-width:var(--ctl);padding:0 8px;display:flex;align-items:center;justify-content:center;gap:4px;font:700 11px var(--f-ui);letter-spacing:.2px}
+#idModeBtn.tor{color:#c084fc;background:color-mix(in srgb,#a855f7 18%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,#a855f7 38%,transparent)}
+#idModeBtn.zaslon{color:var(--acc2);background:color-mix(in srgb,var(--acc) 18%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--acc) 38%,transparent)}
+#idModeIcon{display:inline-flex;align-items:center;justify-content:center}
+#idModeBadge{white-space:nowrap}
 #darkBtn.on{color:var(--acc2);background:color-mix(in srgb,var(--acc) 18%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--acc) 35%,transparent)}
 #rgxBtn.on{color:#22d3ee;background:color-mix(in srgb,#22d3ee 16%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,#22d3ee 40%,transparent),0 0 10px color-mix(in srgb,#22d3ee 22%,transparent)}
 #dots{color:var(--txt);background:color-mix(in srgb,var(--tab) 78%,transparent);box-shadow:inset 0 0 0 1px var(--line)}
@@ -308,6 +313,12 @@ textarea{resize:vertical}
 .menu div.danger-item{color:var(--bad);background:color-mix(in srgb,var(--bad) 7%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--bad) 18%,transparent)}
 .menu div.danger-item .mi svg.i{color:var(--bad)}
 .menu div.danger-item:hover{background:color-mix(in srgb,var(--bad) 18%,transparent);box-shadow:inset 0 0 0 1px var(--bad)}
+.menu div.onion-item{color:#e9d5ff;background:color-mix(in srgb,#a855f7 14%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,#a855f7 38%,transparent)}
+.menu div.onion-item .mi svg.i{color:#c084fc}
+.menu div.onion-item:hover{background:color-mix(in srgb,#a855f7 24%,transparent);box-shadow:inset 0 0 0 1px #c084fc}
+.menu div.onion-item.on{background:color-mix(in srgb,#9333ea 26%,transparent);box-shadow:inset 0 0 0 1px #a855f7}
+.menu div.onion-item kbd{color:#e9d5ff;background:color-mix(in srgb,#a855f7 24%,transparent);padding:2px 6px;border-radius:6px;font-weight:700;font-size:10px;letter-spacing:.3px}
+.menu div.onion-item.on kbd{color:#052e16;background:#34d399}
 .menu kbd{color:var(--mut);font:11.5px var(--f-ui)}
 .menu hr{border:0;height:1px;background:var(--line);margin:6px 4px}
 input[type=range].dr-rng{width:100%;accent-color:var(--acc);cursor:pointer}
@@ -341,6 +352,7 @@ input[type=range].dr-rng{width:100%;accent-color:var(--acc);cursor:pointer}
     <div class="sep"></div>
     <button class="ib" id="dpiBtn" data-i18n-title="tb.dpiInit" title="DPI Aşıcı (SpoofDPI / GoodbyeDPI / Yerleşik TLS Parçalayıcı) — Sol tık: Aç/Kapat, Sağ tık: Ayarlar"></button>
     <button class="ib" id="torBtn" data-i18n-title="tb.tor" title="Tor Zırhlı Ağ, Devre İzolasyonu ve Şifreli DNS (DoH) Paneli"><span id="torIcon"></span><span id="torBadge"></span></button>
+    <button class="ib tor" id="idModeBtn" data-i18n-title="tb.idTor" title="Tarayıcı Kimliği: Tor Browser — Zaslon adına geçmek için tıkla"><span id="idModeIcon"></span><span id="idModeBadge">Tor ID</span></button>
     <button class="ib" id="darkBtn" data-i18n-title="tb.darkInit" title="Gece Okuyucu (Dark Reader) — Sol tık: Koyu Modu Aç/Kapat, Sağ tık: Parlaklık &amp; Göz Koruma Ayarları"></button>
     <button class="ib" id="rgxBtn" data-i18n-title="tb.rgxInit" title="RGX Görüntü &amp; Video Netleştirici (Alt+G) — Sol tık: Aç/Kapat, Sağ tık: RGX Keskinlik &amp; Öncesi/Sonrası Paneli"></button>
     <button class="ib" id="pTr" data-i18n-title="tb.tr" title="Çift Motorlu Tam Sayfa DOM &amp; Metin Çevirisi"></button>
@@ -493,7 +505,7 @@ const P={
 };
 const ic=(n,c='')=>`<svg class="i ${c}" viewBox="0 0 24 24"><path d="${P[n]||P.info}"/></svg>`;
 function paintStatic(){
-  const m={railToggle:'side',newtab:'plus',back:'back',fwd:'fwd',reload:'reload',home:'home',shieldIcon:'shield',star:'star',ext:'ext',dpiBtn:'rocket',torIcon:'tor',darkBtn:'moon',rgxBtn:'rgx',pTr:'tr',mediaIcon:'play',shot:'cam',dots:'dots',fprev:'up',fnext:'down',fclose:'x',panicModalIcon:'flame'};
+  const m={railToggle:'side',newtab:'plus',back:'back',fwd:'fwd',reload:'reload',home:'home',shieldIcon:'shield',star:'star',ext:'ext',dpiBtn:'rocket',torIcon:'tor',idModeIcon:'ghost',darkBtn:'moon',rgxBtn:'rgx',pTr:'tr',mediaIcon:'play',shot:'cam',dots:'dots',fprev:'up',fnext:'down',fclose:'x',panicModalIcon:'flame'};
   for(const k in m){const el=$('#'+k);if(el)el.innerHTML=ic(m[k],k==='dots'?'fill':'')}
   ['brandLogo','vaultLogo'].forEach(id=>{const el=$('#'+id);if(el)el.innerHTML=ZASLON_ATOM_SVG});
 }
@@ -589,6 +601,15 @@ const UI_I18N={
   'tb.dpiOn':{tr:'DPI Aşıcı AKTİF ({engine}) — Kapatmak için tıkla, ayarlar için sağ tıkla',en:'DPI Bypass ACTIVE ({engine}) — Click to disable, right click for settings',ru:'Обход DPI АКТИВЕН ({engine}) — нажмите для отключения, ПКМ: настройки',de:'DPI-Umgehung AKTIV ({engine}) — Klicken zum Deaktivieren, Rechtsklick: Einstellungen'},
   'tb.dpiOff':{tr:'DPI Aşıcı Kapalı — İSS engellerini aşmak için tıkla (Sağ tık: Ayarlar)',en:'DPI Bypass Off — Click to bypass ISP blocks (Right click: Settings)',ru:'Обход DPI выкл — нажмите для обхода блокировок (ПКМ: настройки)',de:'DPI-Umgehung Aus — Klicken zum Umgehen von ISP-Sperren (Rechtsklick: Einstellungen)'},
   'tb.tor':{tr:'Tor Zırhlı Ağ, Devre İzolasyonu ve Şifreli DNS (DoH) Paneli',en:'Tor Armored Network, Circuit Isolation & Encrypted DNS (DoH) Panel',ru:'Сеть Tor, изоляция цепочек и шифрованный DNS (DoH)',de:'Tor-Schutznetz, Leitungsisolation & verschlüsseltes DNS (DoH)'},
+  'tb.idTor':{tr:'Tarayıcı Kimliği: Tor Browser (Firefox 128) — Zaslon adına geçmek için tıkla',en:'Browser Identity: Tor Browser (Firefox 128) — Click to switch to Zaslon name',ru:'Идентификация: Tor Browser (Firefox 128) — нажмите для имени Zaslon',de:'Browser-Identität: Tor Browser (Firefox 128) — Klicken für Zaslon-Name'},
+  'tb.idZaslon':{tr:'Tarayıcı Kimliği: Zaslon Browser — Tor Browser adına geçmek için tıkla',en:'Browser Identity: Zaslon Browser — Click to switch to Tor Browser name',ru:'Идентификация: Zaslon Browser — нажмите для имени Tor Browser',de:'Browser-Identität: Zaslon Browser — Klicken für Tor-Browser-Name'},
+  'id.toastTor':{tr:'Kimlik: Tor Browser (Firefox 128) aktif',en:'Identity: Tor Browser (Firefox 128) active',ru:'Идентификация: Tor Browser (Firefox 128) активна',de:'Identität: Tor Browser (Firefox 128) aktiv'},
+  'id.toastZaslon':{tr:'Kimlik: Zaslon Browser aktif',en:'Identity: Zaslon Browser active',ru:'Идентификация: Zaslon Browser активна',de:'Identität: Zaslon Browser aktiv'},
+  'set.idMode':{tr:'Dış Tarayıcı Kimliği (User-Agent)',en:'Exposed Browser Identity (User-Agent)',ru:'Внешняя идентификация (User-Agent)',de:'Exponierte Browser-Identität (User-Agent)'},
+  'set.idModeDesc':{tr:'Sitelerin gördüğü User-Agent ve navigator kimliğini Tor Browser veya Zaslon Browser olarak değiştirir.',en:'Switches HTTP User-Agent and navigator identity between Tor Browser and Zaslon Browser.',ru:'Переключает User-Agent и navigator между Tor Browser и Zaslon Browser.',de:'Wechselt User-Agent und Navigator-Identität zwischen Tor Browser und Zaslon Browser.'},
+  'set.idTorOpt':{tr:'Tor Browser',en:'Tor Browser',ru:'Tor Browser',de:'Tor Browser'},
+  'set.idZaslonOpt':{tr:'Zaslon Browser',en:'Zaslon Browser',ru:'Zaslon Browser',de:'Zaslon Browser'},
+  'shd.idMode':{tr:'Tarayıcı Kimliği (Siteye Görünüm)',en:'Browser Identity (Visible to Sites)',ru:'Идентификация браузера для сайтов',de:'Browser-Identität (für Websites)'},
   'tb.darkInit':{tr:'Gece Okuyucu (Dark Reader) — Sol tık: Koyu Modu Aç/Kapat, Sağ tık: Parlaklık & Göz Koruma Ayarları',en:'Dark Reader — Left click: Toggle Dark Mode, Right click: Brightness & Eye Protection',ru:'Ночной режим (Dark Reader) — ЛКМ: вкл/выкл, ПКМ: яркость и защита глаз',de:'Nachtleser (Dark Reader) — Linksklick: Dunkelmodus Ein/Aus, Rechtsklick: Einstellungen'},
   'tb.darkOn':{tr:'Gece Okuyucu (Dark Reader) AKTİF — Sol tık: Kapat, Sağ tık: Parlaklık & Kontrast Ayarları',en:'Dark Reader ACTIVE — Left click: Disable, Right click: Brightness & Contrast Settings',ru:'Ночной режим АКТИВЕН — ЛКМ: выкл, ПКМ: настройки яркости и контраста',de:'Nachtleser AKTIV — Linksklick: Aus, Rechtsklick: Helligkeit & Kontrast'},
   'tb.darkOff':{tr:'Gece Okuyucu (Dark Reader) Kapalı — Sol tık: Aç, Sağ tık: Parlaklık & Kontrast Ayarları',en:'Dark Reader Off — Left click: Enable, Right click: Brightness & Contrast Settings',ru:'Ночной режим выкл — ЛКМ: вкл, ПКМ: настройки яркости и контраста',de:'Nachtleser Aus — Linksklick: Ein, Rechtsklick: Helligkeit & Kontrast'},
@@ -724,6 +745,7 @@ const UI_I18N={
   'search.yahooLbl':{tr:'Yahoo',en:'Yahoo',ru:'Yahoo',de:'Yahoo'},
   'search.torBlockedTitle':{tr:'Tor Bağlantısı Hazır Değil (Fail-Closed)',en:'Tor Connection Required (Fail-Closed)',ru:'Требуется подключение к Tor (Fail-Closed)',de:'Tor-Verbindung erforderlich (Fail-Closed)'},
   'search.torStartBtn':{tr:'🧅 Tor Ağını Başlat &amp; Yenile',en:'🧅 Start Tor &amp; Retry',ru:'🧅 Запустить Tor и повторить',de:'🧅 Tor starten &amp; erneut suchen'},
+  'search.switchToIsoBtn':{tr:'🛡️ İzole Oturum ile Ara (Tor Olmadan)',en:'🛡️ Search in Ephemeral Session (Without Tor)',ru:'🛡️ Искать в изолированной сессии (без Tor)',de:'🛡️ In isolierter Sitzung suchen (ohne Tor)'},
   'search.imgHiddenNote':{tr:'Harici bilgi kartı görseli gizlilik için yüklenmedi.',en:'External info card image withheld for privacy.',ru:'Внешнее изображение карточки скрыто ради приватности.',de:'Externes Infokarten-Bild aus Datenschutzgründen blockiert.'},
   'search.desktopOnly':{tr:'Zaslon Meta masaüstü (Electron) çalışma zamanında çalışır.',en:'Zaslon Meta requires the desktop (Electron) runtime.',ru:'Мета-поиск Zaslon работает только в настольном приложении.',de:'Zaslon Meta benötigt die Desktop-Anwendung (Electron).'},
   'search.emptyHint':{tr:'Aramak istediğin kelimeyi yukarıya yaz. İpucu: Hızlı yönlendirme için <b>!d</b> (DuckDuckGo), <b>!b</b> (Brave), <b>!w</b> (Vikipedi), <b>!sp</b> (Startpage), <b>!g</b> (Google) kısayollarını kullanabilirsin.',en:'Type a query above. Tip: Use <b>!d</b> (DuckDuckGo), <b>!b</b> (Brave), <b>!w</b> (Wikipedia), <b>!sp</b> (Startpage), or <b>!g</b> (Google) bangs for instant redirect.',ru:'Введите запрос выше. Совет: используйте быстрые команды <b>!d</b> (DuckDuckGo), <b>!b</b> (Brave), <b>!w</b> (Википедия), <b>!sp</b> (Startpage), <b>!g</b> (Google).',de:'Suchbegriff oben eingeben. Tipp: Nutze <b>!d</b> (DuckDuckGo), <b>!b</b> (Brave), <b>!w</b> (Wikipedia), <b>!sp</b> (Startpage), <b>!g</b> (Google).'},
@@ -1450,6 +1472,12 @@ const UI_I18N={
   'cmd.theme':{tr:'Temayı değiştir',en:'Toggle light/dark theme',ru:'Переключить тему',de:'Design wechseln'},
   'menu.ephem':{tr:'Geçici (RAM) sekme',en:'Ephemeral (RAM) tab',ru:'Временная (RAM) вкладка',de:'Temporärer (RAM) Tab'},
   'menu.tor':{tr:'Tor Zırhlı sekme',en:'Tor Armored tab',ru:'Вкладка Tor',de:'Tor-Geschützter Tab'},
+  'menu.onionMode':{tr:'Onion / Tor Tam Zırhlı Mod',en:'Onion / Tor Full Shield Mode',ru:'Режим Onion / Полный щит Tor',de:'Onion / Tor-Vollschutzmodus'},
+  'menu.onionBadge':{tr:'TAM ZIRH',en:'MAX SHIELD',ru:'МАКС. ЩИТ',de:'MAX SCHUTZ'},
+  'menu.onionActiveBadge':{tr:'AKTİF',en:'ACTIVE',ru:'АКТИВЕН',de:'AKTIV'},
+  'menu.onionOffBadge':{tr:'AKTİF · KAPAT',en:'ACTIVE · OFF',ru:'АКТИВЕН · ВЫКЛ',de:'AKTIV · AUS'},
+  'toast.onionModeOn':{tr:'🧅 Onion Tam Zırhlı Mod aktif: DPI, Sıkı DoH DNS, Tor Ağı, Paranoyak Seviye, Tüm Koruma Katmanları ve Tor Kalkanı zorunlu açıldı.',en:'🧅 Onion Full Shield Mode active: DPI, Strict DoH DNS, Tor Network, Paranoid Level, all Protection Layers and Tor Shield are enforced.',ru:'🧅 Режим полной защиты Onion включён: DPI, строгий DoH DNS, сеть Tor, параноидальный уровень, все слои защиты и щит Tor активны.',de:'🧅 Onion-Vollschutzmodus aktiv: DPI, striktes DoH-DNS, Tor-Netzwerk, Paranoid-Stufe, alle Schutzschichten & Tor-Schild erzwungen.'},
+  'toast.onionModeOff':{tr:'🔓 Onion Tam Zırhlı Mod kapatıldı; önceki gizlilik, ağ ve sekme ayarları geri yüklendi.',en:'🔓 Onion Full Shield Mode disabled; previous privacy, network and tab settings restored.',ru:'🔓 Режим полной защиты Onion отключён; прежние настройки приватности, сети и вкладок восстановлены.',de:'🔓 Onion-Vollschutzmodus deaktiviert; vorherige Datenschutz-, Netz- & Tab-Einstellungen wiederhergestellt.'},
   'menu.dr':{tr:'Gece Okuyucu (Dark Reader)',en:'Dark Reader',ru:'Ночной режим (Dark Reader)',de:'Nachtleser (Dark Reader)'},
   'menu.rgx':{tr:'RGX Video & Görüntü Netleştirici',en:'RGX Video & Image Enhancer',ru:'RGX Улучшение видео и фото',de:'RGX Video- & Bildschärfer'},
   'menu.lan':{tr:'LAN Wi-Fi Cihaz Eşitleme',en:'LAN Wi-Fi Device Sync',ru:'LAN Wi-Fi синхронизация',de:'LAN-WLAN-Gerätesync'},
@@ -1603,6 +1631,7 @@ const S={
     clearOnExit:false,
     clearTabOnClose:false,
     securityLevel:'standard',
+    identityMode:'tor',
     sponsorBlock:true,
     userscriptsEnabled:true,
     darkReader:false,
@@ -1733,23 +1762,39 @@ function sanitize(u){
   try{const o=new URL(u);let n=0;[...o.searchParams.keys()].forEach(k=>{if(TRACK.test(k)){o.searchParams.delete(k);n++}});
     if(n){S.stats.trk+=n;save('stats',S.stats)}return o.toString()}catch{return u}
 }
+function normalizeDdgForSafest(u){
+  if(S?.priv?.securityLevel!=='safest')return u;
+  try{
+    const o=new URL(u);
+    const hn=o.hostname.toLowerCase();
+    const isDdgRoot=hn==='duckduckgo.com'||hn==='www.duckduckgo.com';
+    const isDdgOnion=hn==='duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion';
+    if((isDdgRoot&&(o.pathname==='/'||o.pathname===''))||(isDdgOnion&&(o.pathname==='/'||o.pathname===''||o.pathname.startsWith('/html')||o.pathname.startsWith('/lite')))){
+      const q=o.searchParams.get('q')||'';
+      const useLite=o.pathname.startsWith('/lite');
+      const base=useLite?'https://lite.duckduckgo.com/lite/':'https://html.duckduckgo.com/html/';
+      return q?base+'?q='+encodeURIComponent(q):base;
+    }
+  }catch{}
+  return u;
+}
 function resolve(input){
   input=input.trim();if(!input)return 'zaslon://newtab';
   if(/^zaslon:\/\//.test(input))return input;
   // Bangs (!z, !d, !b, !sp, !g, !y, !w, !yt, !gh)
   const bm=input.match(/^(!\w+)\s+(.+)$/);
   if(bm&&BANGS[bm[1].toLowerCase()]){
-    return BANGS[bm[1].toLowerCase()][1]+encodeURIComponent(bm[2].trim());
+    return normalizeDdgForSafest(BANGS[bm[1].toLowerCase()][1]+encodeURIComponent(bm[2].trim()));
   }
-  if(/^https?:\/\//i.test(input))return sanitize(input);
-  if(/^[\w-]+(\.[\w-]+)+(:\d+)?(\/.*)?$/.test(input)&&!/\s/.test(input)){
-    const hostPart=input.split(/[/:]/)[0].toLowerCase();
+  if(/^https?:\/\//i.test(input))return normalizeDdgForSafest(sanitize(input));
+  if(/^[\w-]+(\.[\w-]+)+(:\d+)?([/?#].*)?$/.test(input)&&!/\s/.test(input)){
+    const hostPart=input.split(/[/:?#]/)[0].toLowerCase();
     const proto=hostPart.endsWith('.onion')?'http://':'https://';
-    return sanitize(proto+input);
+    return normalizeDdgForSafest(sanitize(proto+input));
   }
   if(/^localhost(:\d+)?(\/.*)?$/.test(input))return 'http://'+input;
   const engBase=ENGINES[S.set.engine]||ENGINES['Zaslon Meta'];
-  return engBase+encodeURIComponent(input);
+  return normalizeDdgForSafest(engBase+encodeURIComponent(input));
 }
 
 /* ---------- Panik / Her Şeyi Yak (Onay Korumalı) ---------- */
@@ -2003,8 +2048,21 @@ function toggleRgxQuick(){
   if(panel==='rgx'||panel==='media'||panel==='shield')renderPanel();
   toast(S.priv.rgxEnabled?t('rgx.globalOnToast',{preset:rgxPresetLabel()}):t('rgx.globalOffToast'));
 }
+function toggleIdentityMode(){
+  const curMode=S.priv.identityMode==='zaslon'?'zaslon':'tor';
+  const nextMode=curMode==='tor'?'zaslon':'tor';
+  S.priv.identityMode=nextMode;
+  save('priv',S.priv);
+  updateNetworkBadges();
+  if(panel==='shield'||panel==='net')renderPanel();
+  const activeTab=cur();
+  if(Z&&activeTab&&activeTab.url&&!activeTab.url.startsWith('zaslon://')){
+    Z.reloadTab(activeTab.id);
+  }
+  toast(t(nextMode==='zaslon'?'id.toastZaslon':'id.toastTor'));
+}
 function updateNetworkBadges(){
-  const dpiBtn=$('#dpiBtn'),torBtn=$('#torBtn'),torBadge=$('#torBadge'),darkBtn=$('#darkBtn'),rgxBtn=$('#rgxBtn');
+  const dpiBtn=$('#dpiBtn'),torBtn=$('#torBtn'),torBadge=$('#torBadge'),idModeBtn=$('#idModeBtn'),idModeBadge=$('#idModeBadge'),idModeIcon=$('#idModeIcon'),darkBtn=$('#darkBtn'),rgxBtn=$('#rgxBtn');
   const dpiOn=S.netStatus.dpi?!!S.netStatus.dpi.enabled:!!S.priv.dpi;
   if(dpiBtn){
     dpiBtn.classList.toggle('on',dpiOn);
@@ -2018,6 +2076,14 @@ function updateNetworkBadges(){
     torBtn.classList.toggle('on',st==='connected');
     torBtn.classList.toggle('starting',st==='starting'||st==='installing');
     torBadge.textContent=st==='connected'?'ON':(st==='starting'||st==='installing')?`${tor.bootstrapPct||0}%`:'';
+  }
+  if(idModeBtn&&idModeBadge){
+    const isZaslon=S.priv.identityMode==='zaslon';
+    idModeBtn.classList.toggle('tor',!isZaslon);
+    idModeBtn.classList.toggle('zaslon',isZaslon);
+    idModeBadge.textContent=isZaslon?'Zaslon ID':'Tor ID';
+    idModeBtn.title=t(isZaslon?'tb.idZaslon':'tb.idTor');
+    if(idModeIcon)idModeIcon.innerHTML=ic(isZaslon?'shield':'ghost');
   }
   if(darkBtn){
     const drOn=isDarkReaderActiveForTab(cur());
@@ -2052,6 +2118,198 @@ async function toggleDpiFlow(){
   updateNetworkBadges();
   if(panel==='net'||panel==='shield')renderPanel();
   toast(S.priv.dpi?t('net.dpiOnToast'):t('net.dpiOffToast'));
+}
+function isOnionFullSecurityActive(){
+  const p=S.priv||{};
+  const torState=S.netStatus?.tor?.state||'stopped';
+  const torOn=!!S.netStatus?.tor?.connected||torState==='starting'||torState==='installing';
+  return !!(
+    p.dpi&&p.dohEnabled&&p.dohStrict&&
+    p.adblock&&p.tele&&p.fp&&p.popups&&p.block3pCookies&&p.letterbox&&
+    p.clearTabOnClose&&p.clearOnExit&&p.clearTorDataOnExit&&
+    p.securityLevel==='safest'&&
+    normCont(S.container)==='🧅 Tor Zırhlı'&&
+    torOn
+  );
+}
+const ONION_SNAPSHOT_PRIV_KEYS=[
+  'dpi','dpiMode','dpiSplitProfile','dohEnabled','dohProvider','dohStrict',
+  'adblock','tele','fp','popups','block3pCookies','letterbox',
+  'clearTabOnClose','clearOnExit','clearTorDataOnExit','httpsOnly',
+  'userscriptsEnabled','securityLevel','identityMode',
+  'metaSearchRequireTor','metaSearchRouting','trRouting'
+];
+const ONION_RESTORE_DEFAULTS={
+  dpi:false,dpiMode:'builtin',dpiSplitProfile:'sni-frag',
+  dohEnabled:true,dohProvider:'quad9',dohStrict:true,
+  adblock:true,tele:true,fp:true,popups:true,block3pCookies:true,letterbox:false,
+  clearTabOnClose:false,clearOnExit:false,clearTorDataOnExit:false,httpsOnly:false,
+  userscriptsEnabled:true,securityLevel:'standard',identityMode:'tor',
+  metaSearchRequireTor:false,metaSearchRouting:'tab',trRouting:'tab'
+};
+async function activateOnionFullSecurityMode(){
+  const p=S.priv;
+  if(!isOnionFullSecurityActive()&&!S._onionPrev){
+    const privSnap={};
+    ONION_SNAPSHOT_PRIV_KEYS.forEach(k=>{privSnap[k]=p[k]});
+    const prevCont=normCont(S.container)==='🧅 Tor Zırhlı'?'Kişisel':normCont(S.container);
+    const snap={container:prevCont,priv:privSnap};
+    S._onionPrev=snap;
+    try{localStorage.setItem('zas_onion_prev',JSON.stringify(snap))}catch{}
+  }
+  p.dpi=true;
+  p.dpiMode=p.dpiMode||'builtin';
+  p.dpiSplitProfile='aggr-frag';
+  p.dohEnabled=true;
+  p.dohProvider=p.dohProvider||'quad9';
+  p.dohStrict=true;
+  p.adblock=true;
+  p.tele=true;
+  p.fp=true;
+  p.popups=true;
+  p.block3pCookies=true;
+  p.letterbox=true;
+  p.clearTabOnClose=true;
+  p.clearOnExit=true;
+  p.clearTorDataOnExit=true;
+  p.httpsOnly=true;
+  p.userscriptsEnabled=false;
+  p.securityLevel='safest';
+  p.identityMode='tor';
+  p.metaSearchRequireTor=true;
+  p.metaSearchRouting='tor';
+  p.trRouting='tor';
+  p.whitelist=[];
+  save('priv',p);
+
+  if(Z&&Z.toggleDpi){
+    try{
+      const dpiSt=await Z.toggleDpi({enabled:true,mode:p.dpiMode,splitProfile:p.dpiSplitProfile});
+      if(dpiSt){S.netStatus.dpi=dpiSt;p.dpi=!!dpiSt.enabled}
+    }catch{}
+  }
+  if(Z&&Z.configureDoh){
+    try{
+      const dohSt=await Z.configureDoh({enabled:true,provider:p.dohProvider,customUrl:p.dohCustomUrl||'',strictMode:true});
+      if(dohSt)S.netStatus.doh=dohSt;
+    }catch{}
+  }
+
+  S.container='🧅 Tor Zırhlı';
+  const activeTab=cur();
+  if(Z&&activeTab&&activeTab.url&&!activeTab.url.startsWith('zaslon://')&&S.inspector?.siteWhitelisted&&Z.toggleSiteShield){
+    try{await Z.toggleSiteShield(host(activeTab.url))}catch{}
+  }
+
+  if(Z&&Z.startTor){
+    if(!S.netStatus.tor||S.netStatus.tor.state==='stopped'||S.netStatus.tor.state==='error'){
+      S.netStatus.tor={...(S.netStatus.tor||{}),state:'starting',bootstrapPct:0};
+    }
+    Z.startTor().then(st=>{
+      if(st){
+        S.netStatus.tor=st;
+        updateNetworkBadges();
+        if(panel==='net'||panel==='shield')renderPanel();
+      }
+    }).catch(()=>{});
+  }
+
+  for(const tb of [...S.tabs]){
+    if(tb===activeTab)continue;
+    if(normCont(tb.container)==='🧅 Tor Zırhlı'&&Z&&tb.view.classList.contains('native')){
+      Z.close(tb.id);
+      tb.view.classList.remove('native');
+      navigate(tb,tb.url||'zaslon://newtab',false);
+    }
+  }
+  if(activeTab){
+    if(Z&&activeTab.view.classList.contains('native')){
+      Z.close(activeTab.id);
+      activeTab.view.classList.remove('native');
+    }
+    activeTab.container='🧅 Tor Zırhlı';
+    navigate(activeTab,activeTab.url||'zaslon://newtab',false);
+  }else{
+    newTab('zaslon://newtab','🧅 Tor Zırhlı');
+  }
+
+  updateShieldBadge();
+  updateNetworkBadges();
+  refreshInspectorForActive();
+  if(panel==='net'||panel==='shield')renderPanel();
+  toast(t('toast.onionModeOn'));
+}
+async function deactivateOnionFullSecurityMode(){
+  let snap=S._onionPrev;
+  if(!snap){
+    try{const raw=localStorage.getItem('zas_onion_prev');if(raw)snap=JSON.parse(raw)}catch{}
+  }
+  S._onionPrev=null;
+  try{localStorage.removeItem('zas_onion_prev')}catch{}
+
+  const p=S.priv;
+  const savedPriv=(snap&&snap.priv&&typeof snap.priv==='object')?snap.priv:{};
+  ONION_SNAPSHOT_PRIV_KEYS.forEach(k=>{
+    p[k]=savedPriv[k]!==undefined?savedPriv[k]:ONION_RESTORE_DEFAULTS[k];
+  });
+  save('priv',p);
+
+  const prevContainer=(snap&&snap.container&&normCont(snap.container)!=='🧅 Tor Zırhlı')?normCont(snap.container):'Kişisel';
+  S.container=prevContainer;
+
+  if(Z&&Z.toggleDpi){
+    try{
+      const dpiSt=await Z.toggleDpi({enabled:!!p.dpi,mode:p.dpiMode||'builtin',splitProfile:p.dpiSplitProfile||'sni-frag'});
+      if(dpiSt){S.netStatus.dpi=dpiSt;p.dpi=!!dpiSt.enabled}
+    }catch{}
+  }
+  if(Z&&Z.configureDoh){
+    try{
+      const dohSt=await Z.configureDoh({enabled:!!p.dohEnabled,provider:p.dohProvider||'quad9',customUrl:p.dohCustomUrl||'',strictMode:!!p.dohStrict});
+      if(dohSt)S.netStatus.doh=dohSt;
+    }catch{}
+  }
+  if(Z&&Z.stopTor){
+    try{
+      const torSt=await Z.stopTor();
+      if(torSt)S.netStatus.tor=torSt;
+    }catch{}
+  }
+
+  const activeTab=cur();
+  const safeTargetForTab=tb=>{
+    const u=tb.url||'zaslon://newtab';
+    try{if(/^https?:\/\/[^/]+\.onion([:/?#]|$)/i.test(u))return 'zaslon://newtab'}catch{}
+    return u;
+  };
+  for(const tb of [...S.tabs]){
+    if(tb===activeTab)continue;
+    if(normCont(tb.container)==='🧅 Tor Zırhlı'){
+      tb.container=prevContainer;
+      if(Z&&tb.view.classList.contains('native')){
+        Z.close(tb.id);
+        tb.view.classList.remove('native');
+        navigate(tb,safeTargetForTab(tb),false);
+      }
+    }
+  }
+  if(activeTab){
+    if(Z&&activeTab.view.classList.contains('native')){
+      Z.close(activeTab.id);
+      activeTab.view.classList.remove('native');
+    }
+    activeTab.container=prevContainer;
+    navigate(activeTab,safeTargetForTab(activeTab),false);
+  }
+
+  updateShieldBadge();
+  updateNetworkBadges();
+  refreshInspectorForActive();
+  if(panel==='net'||panel==='shield')renderPanel();
+  toast(t('toast.onionModeOff'));
+}
+function toggleOnionFullSecurityMode(){
+  return isOnionFullSecurityActive()?deactivateOnionFullSecurityMode():activateOnionFullSecurityMode();
 }
 async function syncNetworkStatus(){
   if(!Z||!Z.getNetworkStatus)return;
@@ -2175,6 +2433,13 @@ if(Z){
     S.netStatus.tor=st;
     updateNetworkBadges();
     if(panel==='net'||panel==='shield')renderPanel();
+    if(st&&st.connected){
+      const activeTab=cur();
+      if(activeTab&&activeTab.url&&activeTab.url.startsWith('zaslon://search')&&activeTab.view?.querySelector('#zspStartTorBtn')){
+        S.searchCache={};
+        searchPage(activeTab.view,activeTab,activeTab.url);
+      }
+    }
   });
   Z.on('doh-status',st=>{
     S.netStatus.doh=st;
@@ -2557,9 +2822,9 @@ async function searchPage(v,tab,rawUrl){
   const mp=S.priv.metaSearchProviders||(S.priv.metaSearchProviders={duckduckgo:true,brave:true,wikipedia:true,instant:true,searxng:true,yahoo:false});
   const isTorTab=tab.container==='🧅 Tor Zırhlı';
   const torConn=S.netStatus?.tor?.state==='connected';
-  const reqTor=!!S.priv.metaSearchRequireTor||isTorTab;
+  const reqTor=Boolean(S.priv.metaSearchRequireTor);
   const routeBadgeCls=reqTor&&!torConn?'bad':'ok';
-  const routeBadgeTxt=reqTor?(torConn?t('search.routeTor'):t('search.routeTorLocked')):t('search.routeIso');
+  const routeBadgeTxt=reqTor?(torConn?t('search.routeTor'):t('search.routeTorLocked')):(isTorTab&&torConn?t('search.routeTor'):t('search.routeIso'));
   const engToggles=[['duckduckgo','DuckDuckGo'],['brave','Brave'],['wikipedia','Wikipedia'],['yahoo',t('search.yahooLbl')]];
 
   v.innerHTML=`<div class="zsp">
@@ -2600,7 +2865,11 @@ async function searchPage(v,tab,rawUrl){
     mp[k]=!mp[k];
     rerunWithPriv();
   });
-  v.querySelector('#zspReqTorBtn').onclick=()=>{S.priv.metaSearchRequireTor=!S.priv.metaSearchRequireTor;rerunWithPriv()};
+  v.querySelector('#zspReqTorBtn').onclick=()=>{
+    S.priv.metaSearchRequireTor=!S.priv.metaSearchRequireTor;
+    S.priv.metaSearchRouting=S.priv.metaSearchRequireTor?'tor':'tab';
+    rerunWithPriv();
+  };
   v.querySelector('#zspRegionalBtn').onclick=()=>{S.priv.metaSearchRegional=!S.priv.metaSearchRegional;rerunWithPriv()};
   v.querySelector('#zspImgBtn').onclick=()=>{S.priv.metaSearchLoadImages=!S.priv.metaSearchLoadImages;save('priv',S.priv);searchPage(v,tab,rawUrl)};
 
@@ -2612,9 +2881,11 @@ async function searchPage(v,tab,rawUrl){
 
   const metaOpts={
     tabId:tab.id,
+    container:tab.container,
+    isTorTab,
     searxngUrl:S.set.searxngUrl||'',
     routing:S.priv.metaSearchRouting||'tab',
-    requireTor:!!S.priv.metaSearchRequireTor,
+    requireTor:Boolean(S.priv.metaSearchRequireTor),
     regional:!!S.priv.metaSearchRegional,
     providers:{...mp}
   };
@@ -2637,7 +2908,7 @@ async function searchPage(v,tab,rawUrl){
 
   const badgeEl=v.querySelector('#zspRouteBadge');
   if(badgeEl&&data){
-    const viaTor=data.routedVia==='tor'||reqTor;
+    const viaTor=data.routedVia==='tor';
     badgeEl.className=`badge ${data.blockedByTor?'bad':'ok'}`;
     badgeEl.textContent=data.blockedByTor?t('search.routeTorLocked'):(viaTor?t('search.routeTor'):t('search.routeIso'));
   }
@@ -2646,12 +2917,24 @@ async function searchPage(v,tab,rawUrl){
     bodyEl.innerHTML=`<div class="card" style="padding:22px;border-color:var(--bad)">
       <b style="display:block;margin-bottom:6px;color:var(--bad)">${esc(t('search.torBlockedTitle'))}</b>
       <div class="note" style="margin-bottom:12px">${esc(data.error||'')}</div>
-      ${Z?.startTor?`<button class="btn sm" id="zspStartTorBtn">${t('search.torStartBtn')}</button>`:''}
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        ${Z?.startTor?`<button class="btn sm" id="zspStartTorBtn">${t('search.torStartBtn')}</button>`:''}
+        <button class="btn alt sm" id="zspSwitchNormalBtn">${esc(t('search.switchToIsoBtn'))}</button>
+      </div>
     </div>`;
     const startBtn=bodyEl.querySelector('#zspStartTorBtn');
     if(startBtn)startBtn.onclick=async()=>{
       startBtn.disabled=true;
       await Z.startTor();
+      S.searchCache={};
+      searchPage(v,tab,rawUrl);
+    };
+    const switchBtn=bodyEl.querySelector('#zspSwitchNormalBtn');
+    if(switchBtn)switchBtn.onclick=()=>{
+      if(tab.container==='🧅 Tor Zırhlı')switchTabContainer(tab,'Kişisel');
+      S.priv.metaSearchRequireTor=false;
+      S.priv.metaSearchRouting='tab';
+      save('priv',S.priv);
       S.searchCache={};
       searchPage(v,tab,rawUrl);
     };
@@ -3159,6 +3442,7 @@ function settingsPage(v,sec){
      row(esc(t('set.sugg')),esc(t('set.suggDesc')),tog(s,'sugg'))),
    SC('privacy',esc(t('set.privTitle')),esc(Z?t('set.privDescDesk'):t('set.privDescWeb')),
      row(esc(t('set.secLevel')),esc(t('set.secLevelDesc')),segm(p,'securityLevel',[['standard',esc(t('shd.secStd'))],['safer',esc(t('shd.secSafer'))],['safest',esc(t('shd.secSafest'))]]))+
+     row(esc(t('set.idMode')),esc(t('set.idModeDesc')),segm(p,'identityMode',[['tor',esc(t('set.idTorOpt'))],['zaslon',esc(t('set.idZaslonOpt'))]]))+
      row(esc(t('set.dohTitle')),esc(t('set.dohDesc')),tog(p,'dohEnabled'))+
      row(esc(t('set.dohProv')),esc(t('set.dohProvDesc')),`<select data-psel="dohProvider"><option value="cloudflare" ${p.dohProvider==='cloudflare'?'selected':''}>Cloudflare (1.1.1.1)</option><option value="quad9" ${p.dohProvider==='quad9'?'selected':''}>Quad9 (9.9.9.9)</option><option value="mullvad" ${p.dohProvider==='mullvad'?'selected':''}>Mullvad Privacy DNS</option><option value="adguard" ${p.dohProvider==='adguard'?'selected':''}>AdGuard DNS</option><option value="custom" ${p.dohProvider==='custom'?'selected':''}>${esc(t('net.dohCustom'))}</option></select>`)+
      (p.dohProvider==='custom'?row(esc(t('set.dohCustUrl')),esc(t('set.dohCustDesc')),`<input class="inp s" data-pinp="dohCustomUrl" value="${esc(p.dohCustomUrl||'')}" placeholder="https://dns.example.com/dns-query">`):'')+
@@ -3231,11 +3515,11 @@ function settingsPage(v,sec){
   ].join('');
   const sb=v.querySelector('.sbody');
   sb.innerHTML=body;sb.scrollTop=keep;
-  const refresh=()=>{applySettings();syncAllTabsDarkReader();syncAllTabsRgx();settingsPage(v,v._sec)};
+  const refresh=()=>{applySettings();updateNetworkBadges();syncAllTabsDarkReader();syncAllTabsRgx();settingsPage(v,v._sec)};
   v._sec=sec||'general';
   v.querySelectorAll('.sn').forEach(b=>b.onclick=()=>{v._sec=b.dataset.s;v.querySelectorAll('.sn').forEach(x=>x.classList.toggle('on',x===b));sb.querySelector('#s-'+b.dataset.s).scrollIntoView({block:'start'})});
   sb.onscroll=()=>{let a=SECS[0][0];SECS.forEach(x=>{const e=sb.querySelector('#s-'+x[0]);if(e&&e.offsetTop-sb.scrollTop<120)a=x[0]});v._sec=a;v.querySelectorAll('.sn').forEach(x=>x.classList.toggle('on',x.dataset.s===a))};
-  v.querySelectorAll('.sw').forEach(w=>{const f=()=>{if(w.id==='setMetaYahooSw'){p.metaSearchProviders=p.metaSearchProviders||{duckduckgo:true,brave:true,wikipedia:true,instant:true,searxng:true,yahoo:false};p.metaSearchProviders.yahoo=!p.metaSearchProviders.yahoo;save('priv',p);S.searchCache={};refresh();return}const o=w.dataset.src==='p'?p:s;o[w.dataset.k]=!o[w.dataset.k];if(w.dataset.src==='p'){S.searchCache={};save('priv',p)}else saveSet();refresh()};w.onclick=f;w.onkeydown=e=>{if(e.key===' '||e.key==='Enter'){e.preventDefault();f()}}});
+  v.querySelectorAll('.sw').forEach(w=>{const f=()=>{if(w.id==='setMetaYahooSw'){p.metaSearchProviders=p.metaSearchProviders||{duckduckgo:true,brave:true,wikipedia:true,instant:true,searxng:true,yahoo:false};p.metaSearchProviders.yahoo=!p.metaSearchProviders.yahoo;save('priv',p);S.searchCache={};refresh();return}const o=w.dataset.src==='p'?p:s;o[w.dataset.k]=!o[w.dataset.k];if(w.dataset.src==='p'){if(w.dataset.k==='metaSearchRequireTor'){p.metaSearchRouting=p.metaSearchRequireTor?'tor':'tab'}S.searchCache={};save('priv',p)}else saveSet();refresh()};w.onclick=f;w.onkeydown=e=>{if(e.key===' '||e.key==='Enter'){e.preventDefault();f()}}});
   v.querySelectorAll('[data-seg]').forEach(b=>b.onclick=()=>{const target=b.dataset.segsrc==='p'?p:s;target[b.dataset.seg]=b.dataset.v;(b.dataset.segsrc==='p'?save('priv',p):saveSet());refresh()});
   v.querySelectorAll('[data-sel]').forEach(e=>e.onchange=()=>{const k=e.dataset.sel;if(k==='lang'){setUiLanguage(e.value);return}s[k]=k==='zoom'?+e.value:e.value;saveSet();toast(t('common.saved'))});
   v.querySelectorAll('[data-psel]').forEach(e=>e.onchange=()=>{p[e.dataset.psel]=e.value;save('priv',p);toast(t('set.netUpdated'));refresh()});
@@ -4329,6 +4613,13 @@ function renderPanel(){
 
     <div class="card">
       <b>${t('shd.layers')}</b>
+      <div class="row" style="padding:4px 0 8px">
+        <span>${t('shd.idMode')}</span>
+        <div class="seg" style="flex:none">
+          <button class="${p.identityMode!=='zaslon'?'on':''}" data-idmode="tor">${t('set.idTorOpt')}</button>
+          <button class="${p.identityMode==='zaslon'?'on':''}" data-idmode="zaslon">${t('set.idZaslonOpt')}</button>
+        </div>
+      </div>
       ${sw('adblock',t('shd.lAdblock'))}
       ${sw('tele',t('shd.lTele'))}
       ${sw('fp',t('shd.lFp'))}
@@ -4377,6 +4668,7 @@ function renderPanel(){
       renderPanel();
     });
     el.querySelectorAll('[data-sec]').forEach(b=>b.onclick=()=>{p.securityLevel=b.dataset.sec;save('priv',p);toast(t('shd.secToast',{name:b.textContent}));renderPanel()});
+    el.querySelectorAll('[data-idmode]').forEach(b=>b.onclick=()=>{const nm=b.dataset.idmode==='zaslon'?'zaslon':'tor';if(p.identityMode!==nm){p.identityMode=nm;save('priv',p);updateNetworkBadges();if(Z&&isWeb)Z.reloadTab(tab.id);toast(t(nm==='zaslon'?'id.toastZaslon':'id.toastTor'));renderPanel()}});
     el.querySelectorAll('[data-if]').forEach(b=>b.onclick=()=>{S.inspFilter=b.dataset.if;renderPanel()});
     el.querySelectorAll('[data-drule]').forEach(b=>b.onclick=async()=>{
       const dom=b.dataset.drule,act=b.dataset.act;
@@ -5093,6 +5385,7 @@ const getMenu=()=>[
   [t('sh.newTab'),'Ctrl+T',()=>newTab(),'plus'],
   [t('menu.ephem'),'',()=>newTab('zaslon://newtab','Geçici'),'ghost'],
   [t('menu.tor'),'',()=>newTab('zaslon://newtab','🧅 Tor Zırhlı'),'tor'],
+  [t('menu.onionMode'),isOnionFullSecurityActive()?t('menu.onionOffBadge'):t('menu.onionBadge'),()=>toggleOnionFullSecurityMode(),'tor',isOnionFullSecurityActive()?'onion-item on':'onion-item'],
   [t('menu.dr'),'',()=>openPanel('dark'),'moon'],
   [t('menu.rgx'),'Alt+G',()=>openPanel('rgx'),'rgx'],
   [t('menu.lan'),'',()=>openDrawer('lan'),'wifi'],
@@ -5122,7 +5415,7 @@ $('#dots').onclick=e=>{
   getMenu().forEach(x=>{
     if(!x){m.appendChild(document.createElement('hr'));return}
     const d=document.createElement('div');
-    if(x[4])d.className='danger-item';
+    if(x[4])d.className=x[4]===true?'danger-item':x[4];
     d.innerHTML=`<span class="mi">${x[3]?ic(x[3]):''}<span>${esc(x[0])}</span></span><kbd>${esc(x[1]||'')}</kbd>`;
     d.onclick=()=>{m.style.display='none';x[2]()};
     m.appendChild(d);
@@ -5177,6 +5470,7 @@ $('#shield').oncontextmenu=async e=>{
 $('#dpiBtn').onclick=e=>{e.stopPropagation();toggleDpiFlow()};
 $('#dpiBtn').oncontextmenu=e=>{e.preventDefault();e.stopPropagation();openPanel('net')};
 $('#torBtn').onclick=e=>{e.stopPropagation();openPanel('net')};
+$('#idModeBtn').onclick=e=>{e.stopPropagation();toggleIdentityMode()};
 $('#darkBtn').onclick=e=>{e.stopPropagation();toggleDarkReaderQuick()};
 $('#darkBtn').oncontextmenu=e=>{e.preventDefault();e.stopPropagation();openPanel('dark')};
 $('#rgxBtn').onclick=e=>{e.stopPropagation();toggleRgxQuick()};

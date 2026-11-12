@@ -543,8 +543,8 @@ class EncryptedVault {
    */
   panicWipe(wipeEverything = false) {
     const keysToShred = wipeEverything
-      ? ['hist', 'search_hist', 'session', 'rss_read', 'favcache', 'bms', 'reads', 'notes', 'stats', 'priv']
-      : ['hist', 'search_hist', 'session', 'rss_read', 'favcache'];
+      ? ['hist', 'search_hist', 'session', 'rss_read', 'favcache', 'bms', 'reads', 'notes', 'stats', 'priv', 'shield_rules']
+      : ['hist', 'search_hist', 'session', 'rss_read', 'favcache', 'shield_rules'];
 
     for (const k of keysToShred) {
       this.delete(k);

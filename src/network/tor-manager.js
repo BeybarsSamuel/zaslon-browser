@@ -158,7 +158,8 @@ function connectViaTorSocks5({ socksHost = '127.0.0.1', socksPort = 9050, target
       reject(err instanceof Error ? err : new Error(String(err)));
     };
 
-    sock.setTimeout(15000, () => fail(new Error(t('tor.socksTimeout'))));
+    const isOnion = String(targetHost || '').trim().toLowerCase().endsWith('.onion');
+    sock.setTimeout(isOnion ? 45000 : 20000, () => fail(new Error(t('tor.socksTimeout'))));
     sock.once('error', fail);
 
     sock.once('connect', () => {
@@ -257,6 +258,14 @@ function connectViaTorSocks5({ socksHost = '127.0.0.1', socksPort = 9050, target
   });
 }
 
+function sanitizeBridgeLine(raw) {
+  const s = String(raw || '').split(/[\r\n\0]/)[0].replace(/\s+/g, ' ').trim();
+  if (!s || s.length > 512) return '';
+  // Yalnızca güvenli bridge satırı karakterlerine izin ver (komut enjeksiyonunu önle)
+  if (/[^\x20-\x7E]/.test(s)) return '';
+  return s.replace(/^bridge\s+/i, '');
+}
+
 class TorManager {
   constructor({
     userDataPath,
@@ -264,7 +273,8 @@ class TorManager {
     fetchFn,
     onStatusChange,
     allowExternalTor = false,
-    clearTorDataOnExit = false
+    clearTorDataOnExit = false,
+    bridges = []
   } = {}) {
     this.userDataPath = userDataPath || '';
     this.resourcesPath = resourcesPath || path.join(__dirname, '../../resources');
@@ -273,6 +283,7 @@ class TorManager {
 
     this.allowExternalTor = !!allowExternalTor;
     this.clearTorDataOnExit = !!clearTorDataOnExit;
+    this.bridges = Array.isArray(bridges) ? bridges.map(sanitizeBridgeLine).filter(Boolean) : [];
     this.dataDir = this.userDataPath ? path.join(this.userDataPath, 'tor-data') : '';
     this.state = 'stopped'; // 'stopped' | 'starting' | 'connected' | 'installing' | 'error'
     this.bootstrapPct = 0;
@@ -318,6 +329,78 @@ class TorManager {
       if (fs.existsSync(p)) return p;
     }
     return null;
+  }
+
+  /**
+   * Pluggable Transport ikilisini (lyrebird / obfs4proxy / snowflake-client) arar.
+   */
+  findPluggableTransport(torBin = '') {
+    const ext = process.platform === 'win32' ? '.exe' : '';
+    const baseDirs = [
+      torBin ? path.dirname(torBin) : '',
+      torBin ? path.join(path.dirname(torBin), 'pluggable_transports') : '',
+      path.join(this.resourcesPath, 'bin', 'tor', 'pluggable_transports'),
+      this.userDataPath ? path.join(this.userDataPath, 'bin', 'tor', 'tor', 'pluggable_transports') : ''
+    ].filter(Boolean);
+
+    const names = ['lyrebird', 'obfs4proxy', 'snowflake-client', 'webtunnel-client'];
+    const found = {};
+    for (const dir of baseDirs) {
+      for (const n of names) {
+        if (found[n]) continue;
+        const p = path.join(dir, n + ext);
+        try {
+          if (fs.existsSync(p)) found[n] = p;
+        } catch {}
+      }
+    }
+    return found;
+  }
+
+  setBridges(bridges = []) {
+    this.bridges = Array.isArray(bridges) ? bridges.map(sanitizeBridgeLine).filter(Boolean) : [];
+    this.emitStatus();
+    return this.bridges;
+  }
+
+  buildTorSpawnArgs(dataDir, torBin = '') {
+    const args = [
+      '--DataDirectory',
+      dataDir,
+      '--SocksPort',
+      `127.0.0.1:${this.socksPort} IsolateSOCKSAuth`,
+      '--ControlPort',
+      `127.0.0.1:${this.controlPort}`,
+      '--CookieAuthentication',
+      '1',
+      '--SafeSocks',
+      '1',
+      '--ClientOnly',
+      '1',
+      '--AvoidDiskWrites',
+      '1',
+      '--ConnectionPadding',
+      '1',
+      '--ReducedConnectionPadding',
+      '0'
+    ];
+
+    if (Array.isArray(this.bridges) && this.bridges.length > 0) {
+      args.push('--UseBridges', '1');
+      const pt = this.findPluggableTransport(torBin);
+      const lyrebird = pt.lyrebird || '';
+      const obfs4 = lyrebird || pt.obfs4proxy || '';
+      const snowflake = lyrebird || pt['snowflake-client'] || '';
+      const webtunnel = lyrebird || pt['webtunnel-client'] || '';
+      if (obfs4) args.push('--ClientTransportPlugin', `obfs4 exec ${obfs4}`);
+      if (snowflake) args.push('--ClientTransportPlugin', `snowflake exec ${snowflake}`);
+      if (webtunnel) args.push('--ClientTransportPlugin', `webtunnel exec ${webtunnel}`);
+      for (const line of this.bridges) {
+        args.push('--Bridge', line);
+      }
+    }
+
+    return args;
   }
 
   /**
@@ -434,9 +517,51 @@ class TorManager {
             torSock.write(newReq);
             if (extraPayload.length > 0) torSock.write(extraPayload);
 
+            // Chromium HTTP/1.1 keep-alive proxy soketini yeniden kullanıp sonraki .onion isteklerini asılı bırakmasın
+            let resBuf = Buffer.alloc(0);
+            let resHeadersForwarded = false;
+            const onTorData = (chunk) => {
+              if (resHeadersForwarded) {
+                if (!clientSocket.destroyed) clientSocket.write(chunk);
+                return;
+              }
+              resBuf = resBuf.length === 0 ? chunk : Buffer.concat([resBuf, chunk]);
+              const sepIdx = resBuf.indexOf('\r\n\r\n');
+              if (sepIdx === -1) {
+                if (resBuf.length > 65536) {
+                  resHeadersForwarded = true;
+                  if (!clientSocket.destroyed) clientSocket.write(resBuf);
+                  resBuf = Buffer.alloc(0);
+                }
+                return;
+              }
+              resHeadersForwarded = true;
+              const rawHead = resBuf.subarray(0, sepIdx).toString('latin1');
+              const remainder = resBuf.subarray(sepIdx + 4);
+              resBuf = Buffer.alloc(0);
+              const resLines = rawHead.split('\r\n');
+              const statusLine = resLines[0] || 'HTTP/1.1 200 OK';
+              const filtered = resLines
+                .slice(1)
+                .filter(l => l && !/^Connection:/i.test(l) && !/^Proxy-Connection:/i.test(l));
+              filtered.push('Connection: close');
+              if (!clientSocket.destroyed) {
+                clientSocket.write(Buffer.from(`${statusLine}\r\n${filtered.join('\r\n')}\r\n\r\n`, 'latin1'));
+                if (remainder.length > 0) clientSocket.write(remainder);
+              }
+              torSock.removeListener('data', onTorData);
+              torSock.pipe(clientSocket);
+            };
+            torSock.on('data', onTorData);
             clientSocket.pipe(torSock);
-            torSock.pipe(clientSocket);
 
+            torSock.once('end', () => {
+              if (!resHeadersForwarded && resBuf.length > 0 && !clientSocket.destroyed) {
+                clientSocket.write(resBuf);
+                resBuf = Buffer.alloc(0);
+              }
+              if (!clientSocket.destroyed) clientSocket.end();
+            });
             torSock.on('error', () => {
               if (!clientSocket.destroyed) clientSocket.destroy();
             });
@@ -595,22 +720,7 @@ class TorManager {
         try {
           const proc = spawn(
             torBin,
-            [
-              '--DataDirectory',
-              dataDir,
-              '--SocksPort',
-              `127.0.0.1:${this.socksPort} IsolateSOCKSAuth`,
-              '--ControlPort',
-              `127.0.0.1:${this.controlPort}`,
-              '--CookieAuthentication',
-              '1',
-              '--SafeSocks',
-              '1',
-              '--ClientOnly',
-              '1',
-              '--AvoidDiskWrites',
-              '1'
-            ],
+            this.buildTorSpawnArgs(dataDir, torBin),
             { windowsHide: true }
           );
           this.torProc = proc;
@@ -986,6 +1096,7 @@ class TorManager {
       circuitEpoch: this.circuitEpoch,
       exitIp: this.exitIp,
       hasTorBinary: !!this.findTorBinary(),
+      bridgesCount: Array.isArray(this.bridges) ? this.bridges.length : 0,
       lastError: this.lastError,
       isolatedCircuits: [...this.isolatedDomains.values()].sort((a, b) => b.lastUsed - a.lastUsed)
     };
@@ -1002,5 +1113,6 @@ module.exports = {
   TorManager,
   extractRootDomain,
   connectViaTorSocks5,
-  verifySocks5Listener
+  verifySocks5Listener,
+  sanitizeBridgeLine
 };

@@ -25,7 +25,9 @@ const {
   hardenWebContents,
   computeLetterboxBounds,
   getUniformChromeMajor,
-  getUniformBrowserUserAgent
+  getUniformBrowserUserAgent,
+  normalizeIdentityMode,
+  getIdentityProfile
 } = require('./src/privacy/chromium-hardening');
 const { cleanTrackingUrl } = require('./src/privacy/url-cleaner');
 const { AdblockAndInspectorEngine } = require('./src/privacy/adblock-engine');
@@ -51,14 +53,20 @@ const { GitHubUpdater } = require('./src/storage/github-updater');
 const { t, setLang, getLang, normalizeLang } = require('./src/i18n/translations');
 
 // 1. Zırh: Motor daha başlamadan tüm Google/Chromium arka plan servislerini ve WebRTC sızıntısını kapat
+let startupSecurityLevel = 'standard';
 try {
   app.name = 'Zaslon Browser';
   app.setName('Zaslon Browser');
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.zaslon.browser');
   }
+  const secMarker = path.join(app.getPath('userData'), 'sec-level.txt');
+  if (fs.existsSync(secMarker)) {
+    const savedSec = String(fs.readFileSync(secMarker, 'utf8') || '').trim().toLowerCase();
+    if (savedSec === 'safer' || savedSec === 'safest') startupSecurityLevel = savedSec;
+  }
 } catch {}
-applyChromiumHardeningFlags(app);
+applyChromiumHardeningFlags(app, { securityLevel: startupSecurityLevel });
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -77,12 +85,16 @@ const prefs = {
   clearOnExit: false,
   clearTabOnClose: false,
   securityLevel: 'standard', // 'standard' | 'safer' | 'safest'
+  identityMode: 'tor', // 'tor' | 'zaslon'
+  httpsOnly: true,
+  autoOnionLocation: true,
   dohEnabled: true,
   dohProvider: 'quad9',
   dohCustomUrl: '',
   dohStrict: true,
   allowExternalTor: false,
   clearTorDataOnExit: false,
+  torBridges: [],
   dpi: false,
   dpiMode: 'builtin', // 'builtin' | 'spoofdpi' | 'goodbyedpi'
   dpiSplitProfile: 'sni-frag',
@@ -204,8 +216,36 @@ function hardenDefaultSession() {
 
 const UNIFORM_CHROME_MAJOR = getUniformChromeMajor();
 const UNIFORM_BROWSER_UA = getUniformBrowserUserAgent();
+function getActiveIdentityProfile() {
+  return getIdentityProfile(prefs.identityMode || 'tor', UNIFORM_CHROME_MAJOR);
+}
+function getActiveBrowserUserAgent() {
+  return getActiveIdentityProfile().ua || UNIFORM_BROWSER_UA;
+}
+function applyIdentityToAllSessions() {
+  const activeUa = getActiveBrowserUserAgent();
+  try {
+    if (app) app.userAgentFallback = activeUa;
+  } catch {}
+  for (const part of prepared) {
+    try {
+      const ses = session.fromPartition(part);
+      const norm = partitionToContainer.get(part) || '';
+      if (prefs.fp || norm === '🧅 Tor Zırhlı' || prefs.identityMode === 'tor' || prefs.identityMode === 'zaslon') {
+        ses.setUserAgent(activeUa);
+      }
+    } catch {}
+  }
+  for (const r of views.values()) {
+    try {
+      if (r && r.view && r.view.webContents && !r.view.webContents.isDestroyed()) {
+        r.view.webContents.setUserAgent(activeUa);
+      }
+    } catch {}
+  }
+}
 try {
-  if (app) app.userAgentFallback = UNIFORM_BROWSER_UA;
+  if (app) app.userAgentFallback = getActiveBrowserUserAgent();
 } catch {}
 const FAIL_CLOSED_TOR_PROXY = {
   mode: 'fixed_servers',
@@ -304,9 +344,63 @@ async function ensureSessionReady(container, tabId = '', firstPartyHost = '') {
     await inflight.catch(() => {});
   }
   if (norm === '🧅 Tor Zırhlı') {
+    if (firstPartyHost) {
+      const prevHost = partitionFirstParty.get(part) || '';
+      const prevRoot = prevHost ? extractRootDomain(prevHost) : '';
+      const nextRoot = extractRootDomain(firstPartyHost);
+      if (prevRoot && nextRoot && prevRoot !== nextRoot) {
+        await Promise.allSettled([
+          ses.clearCache(),
+          ses.clearHostResolverCache(),
+          ses.clearAuthCache(),
+          ses.clearStorageData({
+            storages: ['cookies', 'localstorage', 'indexdb', 'websql', 'serviceworkers', 'cachestorage', 'filesystem']
+          })
+        ]);
+      }
+    }
     await setSessionProxyWithTracking(part, ses, norm, firstPartyHost);
   }
   return ses;
+}
+
+function isPublicClearnetHttpUpgradeEligible(urlStr) {
+  if (!urlStr || !urlStr.startsWith('http://')) return false;
+  try {
+    const u = new URL(urlStr);
+    const h = (u.hostname || '').toLowerCase();
+    if (!h || h === 'onion' || h.endsWith('.onion')) return false;
+    if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local')) return false;
+    if (h === '::1' || h === '[::1]' || h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')) return false;
+    if (/^(127\.|10\.|192\.168\.|169\.254\.|0\.)/.test(h)) return false;
+    const m172 = h.match(/^172\.(\d+)\./);
+    if (m172) {
+      const oct = Number(m172[1]);
+      if (oct >= 16 && oct <= 31) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function extractValidOnionLocationHeader(responseHeaders) {
+  if (!responseHeaders || typeof responseHeaders !== 'object') return '';
+  for (const hdrKey of Object.keys(responseHeaders)) {
+    if (hdrKey.toLowerCase() !== 'onion-location') continue;
+    const rawVal = Array.isArray(responseHeaders[hdrKey]) ? responseHeaders[hdrKey][0] : responseHeaders[hdrKey];
+    const candidate = String(rawVal || '').trim();
+    if (!candidate || /[\r\n\0\s]/.test(candidate)) return '';
+    try {
+      const u = new URL(candidate);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+      const host = (u.hostname || '').toLowerCase();
+      if (/^[a-z2-7]{56}\.onion$/i.test(host) || /^[a-z2-7]{16}\.onion$/i.test(host)) {
+        return u.toString();
+      }
+    } catch {}
+  }
+  return '';
 }
 
 async function ensureTorStartedOrInstalled(opts = {}) {
@@ -357,9 +451,9 @@ function getSession(container, tabId = '') {
   } catch {}
   setSessionProxyWithTracking(part, ses, norm);
 
-  // Standart ve tek tip UA havuzu (Electron/Zaslon/OS sürüm izini temizle)
-  if (prefs.fp || norm === '🧅 Tor Zırhlı') {
-    ses.setUserAgent(UNIFORM_BROWSER_UA);
+  // Aktif kimlik havuzu ('tor' -> Tor Browser / 'zaslon' -> Zaslon Browser)
+  if (prefs.fp || norm === '🧅 Tor Zırhlı' || prefs.identityMode === 'tor' || prefs.identityMode === 'zaslon') {
+    ses.setUserAgent(getActiveBrowserUserAgent());
   } else {
     const cleanUA = ses
       .getUserAgent()
@@ -377,6 +471,11 @@ function getSession(container, tabId = '') {
         return cb({});
       }
 
+      // 0) Telemetri ping & CSP raporlama isteklerini engelle (<a ping>, report-uri / NEL)
+      if (prefs.tele && (details.resourceType === 'ping' || details.resourceType === 'cspReport')) {
+        return cb({ cancel: true });
+      }
+
       // 1) Ana çerçeve geçişlerinde takip parametrelerini (utm_*, fbclid, gclid, si vb.) temizle
       if (isHttp && prefs.tele && details.resourceType === 'mainFrame') {
         const cleaned = cleanTrackingUrl(urlStr);
@@ -388,6 +487,36 @@ function getSession(container, tabId = '') {
           }
           return cb({ redirectURL: cleaned.url });
         }
+      }
+
+      // 1b) HTTPS-Only Yükseltmesi (Yalnızca açık ağ için; .onion ve yerel adreslere dokunmaz)
+      if ((prefs.httpsOnly || norm === '🧅 Tor Zırhlı') && details.resourceType === 'mainFrame' && isPublicClearnetHttpUpgradeEligible(urlStr)) {
+        return cb({ redirectURL: 'https://' + urlStr.slice(7) });
+      }
+
+      // 1c) Paranoyak ('safest') / JS-kapalı modda DuckDuckGo SPA & 202 CAPTCHA aşımı:
+      // duckduckgo.com / DDG .onion GET isteklerini JS gerektirmeyen html/lite ucuna yönlendir
+      if (
+        isHttp &&
+        prefs.securityLevel === 'safest' &&
+        details.resourceType === 'mainFrame' &&
+        (!details.method || details.method.toUpperCase() === 'GET')
+      ) {
+        try {
+          const ddgUrl = new URL(urlStr);
+          const hn = ddgUrl.hostname.toLowerCase();
+          const isDdgRoot = hn === 'duckduckgo.com' || hn === 'www.duckduckgo.com';
+          const isDdgOnion = hn === 'duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion';
+          if (
+            (isDdgRoot && (ddgUrl.pathname === '/' || ddgUrl.pathname === '')) ||
+            (isDdgOnion && (ddgUrl.pathname === '/' || ddgUrl.pathname === '' || ddgUrl.pathname.startsWith('/html') || ddgUrl.pathname.startsWith('/lite')))
+          ) {
+            const qParam = ddgUrl.searchParams.get('q') || '';
+            const useLite = ddgUrl.pathname.startsWith('/lite');
+            const targetBase = useLite ? 'https://lite.duckduckgo.com/lite/' : 'https://html.duckduckgo.com/html/';
+            return cb({ redirectURL: qParam ? `${targetBase}?q=${encodeURIComponent(qParam)}` : targetBase });
+          }
+        } catch {}
       }
 
       // 2) AdBlock + Telemetri Duvarı + Güvenlik Seviyesi + Canlı İstek Denetçisi değerlendirmesi
@@ -423,7 +552,7 @@ function getThirdPartyCookieContext(details) {
     const topRoot = extractRootDomain(topHost);
     const targetRoot = extractRootDomain(targetHost);
     if (!topRoot || !targetRoot || topRoot === targetRoot) return null;
-    if (adblockEngine && adblockEngine.isSiteWhitelisted(topUrl)) return null;
+    if (prefs.securityLevel !== 'safest' && norm !== '🧅 Tor Zırhlı' && adblockEngine && adblockEngine.isSiteWhitelisted(topUrl)) return null;
     return { tabId, topRoot, targetRoot };
   } catch {
     return null;
@@ -437,37 +566,65 @@ function getThirdPartyCookieContext(details) {
     const isThirdParty = (prefs.block3pCookies || isTorSes) ? getThirdPartyCookieContext(details) : null;
     if (isThirdParty) {
       for (const hdrKey of Object.keys(h)) {
-        if (hdrKey.toLowerCase() === 'cookie') {
+        const lower = hdrKey.toLowerCase();
+        if (lower === 'cookie' || lower === 'if-none-match' || lower === 'if-modified-since') {
           delete h[hdrKey];
         }
       }
     }
-    if (prefs.fp || isTorSes) {
+    if (prefs.fp || isTorSes || prefs.securityLevel === 'safest') {
       h['Sec-GPC'] = '1';
-      h['DNT'] = '1';
       let existingReferer = '';
       for (const hdrKey of Object.keys(h)) {
         const lower = hdrKey.toLowerCase();
-        if (lower.startsWith('sec-ch-ua')) {
+        if (
+          lower.startsWith('sec-ch-ua') ||
+          lower === 'x-client-data' ||
+          lower === 'x-requested-with' ||
+          lower === 'dnt' ||
+          lower === 'sec-browsing-topics' ||
+          lower === 'observe-browsing-topics' ||
+          lower === 'device-memory' ||
+          lower === 'viewport-width' ||
+          lower === 'width' ||
+          lower === 'downlink' ||
+          lower === 'ect' ||
+          lower === 'rtt' ||
+          lower === 'save-data' ||
+          lower === 'from'
+        ) {
           delete h[hdrKey];
-        } else if (isTorSes && (lower === 'user-agent' || lower === 'accept-language')) {
+        } else if ((isTorSes || prefs.securityLevel === 'safest') && lower === 'accept-language') {
+          delete h[hdrKey];
+        } else if (
+          lower === 'user-agent' &&
+          (isTorSes || prefs.securityLevel === 'safest' || prefs.fp || prefs.identityMode === 'tor' || prefs.identityMode === 'zaslon')
+        ) {
           delete h[hdrKey];
         } else if (lower === 'referer') {
           existingReferer = h[hdrKey];
           delete h[hdrKey];
         }
       }
-      if (isTorSes) {
-        h['User-Agent'] = UNIFORM_BROWSER_UA;
+      if (isTorSes || prefs.securityLevel === 'safest' || prefs.fp || prefs.identityMode === 'tor' || prefs.identityMode === 'zaslon') {
+        h['User-Agent'] = getActiveBrowserUserAgent();
+      }
+      if (isTorSes || prefs.securityLevel === 'safest') {
         h['Accept-Language'] = 'en-US,en;q=0.5';
       }
       if (existingReferer) {
         try {
           const r = new URL(existingReferer);
           const u = new URL(details.url);
-          h['Referer'] = r.origin !== u.origin ? r.origin + '/' : existingReferer;
+          if (r.origin === u.origin) {
+            h['Referer'] = existingReferer;
+          } else if (!(isTorSes || prefs.securityLevel === 'safest')) {
+            h['Referer'] = r.origin + '/';
+          }
         } catch {
-          h['Referer'] = existingReferer;
+          if (!(isTorSes || prefs.securityLevel === 'safest')) {
+            h['Referer'] = existingReferer;
+          }
         }
       }
     }
@@ -481,19 +638,51 @@ function getThirdPartyCookieContext(details) {
         streamSniffer.inspectHeadersReceived(details);
       }
       const isTorSes = norm === '🧅 Tor Zırhlı';
+      if (
+        isTorSes &&
+        prefs.autoOnionLocation !== false &&
+        details.resourceType === 'mainFrame' &&
+        /^https:\/\//i.test(details.url || '') &&
+        !(prefs.securityLevel === 'safest' && /^https:\/\/(html|lite)\.duckduckgo\.com(\/|$)/i.test(details.url || '')) &&
+        details.responseHeaders
+      ) {
+        const onionRedirect = extractValidOnionLocationHeader(details.responseHeaders);
+        if (onionRedirect) {
+          return cb({ redirectURL: onionRedirect });
+        }
+      }
       const stripCookies = (prefs.block3pCookies || isTorSes) && getThirdPartyCookieContext(details);
+      const stripTelemetryResp = Boolean(prefs.tele || isTorSes);
       const enforceSafestCsp =
         prefs.securityLevel === 'safest' &&
         (details.resourceType === 'mainFrame' || details.resourceType === 'subFrame') &&
         /^https?:\/\//i.test(details.url || '');
-      if ((stripCookies || enforceSafestCsp) && details.responseHeaders) {
+      if ((stripCookies || stripTelemetryResp || enforceSafestCsp) && details.responseHeaders) {
         const rh = { ...details.responseHeaders };
         let modified = false;
         if (stripCookies) {
           for (const hdrKey of Object.keys(rh)) {
-            if (hdrKey.toLowerCase() === 'set-cookie') {
+            const low = hdrKey.toLowerCase();
+            if (low === 'set-cookie' || low === 'etag') {
               delete rh[hdrKey];
               modified = true;
+            }
+          }
+        }
+        if (stripTelemetryResp) {
+          for (const hdrKey of Object.keys(rh)) {
+            const low = hdrKey.toLowerCase();
+            if (low === 'nel' || low === 'report-to' || low === 'reporting-endpoints') {
+              delete rh[hdrKey];
+              modified = true;
+            } else if (low === 'link') {
+              const vals = Array.isArray(rh[hdrKey]) ? rh[hdrKey] : [String(rh[hdrKey])];
+              const filtered = vals.filter(v => !/rel=["']?(?:preconnect|dns-prefetch|prefetch)["']?/i.test(String(v)));
+              if (filtered.length !== vals.length) {
+                if (filtered.length) rh[hdrKey] = filtered;
+                else delete rh[hdrKey];
+                modified = true;
+              }
             }
           }
         }
@@ -520,16 +709,24 @@ function getThirdPartyCookieContext(details) {
     cb({});
   });
 
-  // İzin İstekleri: Bildirim, konum, mikrofon/kamera tuzaklarını varsayılan olarak reddet
+  // İzin İstekleri: Bildirim, konum, mikrofon/kamera tuzaklarını varsayılan olarak reddet (Tor / Paranoyak modda tümünü engelle)
+  ses.setPermissionCheckHandler?.((_wc, perm) => {
+    if (norm === '🧅 Tor Zırhlı' || prefs.securityLevel === 'safest') return false;
+    return ['fullscreen', 'clipboard-sanitized-write', 'pointerLock'].includes(perm);
+  });
   ses.setPermissionRequestHandler((_wc, perm, cb) => {
+    if (norm === '🧅 Tor Zırhlı' || prefs.securityLevel === 'safest') {
+      return cb(false);
+    }
     const allowed = ['fullscreen', 'clipboard-sanitized-write', 'pointerLock'].includes(perm);
     cb(allowed);
   });
 
-  // İndirme Yöneticisi
+  // İndirme Yöneticisi (BiDi/RTL spoofing ve yol enjeksiyonu temizliği ile)
   ses.on('will-download', (_e, item) => {
     const dir = app.getPath('downloads');
-    let name = item.getFilename();
+    const rawName = path.basename(String(item.getFilename() || 'download'));
+    let name = rawName.replace(/[\u0000-\u001F\u007F\u202A-\u202E\u2066-\u2069<>:"/\\|?*]/g, '_').trim() || 'download';
     let full = path.join(dir, name);
     let n = 1;
     const ext = path.extname(name);
@@ -564,7 +761,7 @@ async function getHardenedEphemeralSession(partitionName, containerName = 'Geçi
       ses.setSpellCheckerEnabled?.(false);
       ses.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
       ses.setPermissionCheckHandler?.(() => false);
-      ses.setUserAgent(UNIFORM_BROWSER_UA);
+      ses.setUserAgent(getActiveBrowserUserAgent());
       ses.webRequest.onBeforeSendHeaders((details, cb) => {
         const h = { ...(details.requestHeaders || {}) };
         for (const hdrKey of Object.keys(h)) {
@@ -582,7 +779,7 @@ async function getHardenedEphemeralSession(partitionName, containerName = 'Geçi
             delete h[hdrKey];
           }
         }
-        h['User-Agent'] = UNIFORM_BROWSER_UA;
+        h['User-Agent'] = getActiveBrowserUserAgent();
         h['Accept-Language'] = 'en-US,en;q=0.5';
         h['Sec-GPC'] = '1';
         cb({ requestHeaders: h });
@@ -772,6 +969,7 @@ async function applyDark(rec) {
 }
 
 function isAdblockEffectiveForUrl(urlStr) {
+  if (prefs.securityLevel === 'safest') return true;
   if (!prefs.adblock) return false;
   if (!adblockEngine || !urlStr || !urlStr.startsWith('http')) return !!prefs.adblock;
   try {
@@ -876,6 +1074,7 @@ function createView(id, container) {
         `--zaslon-popups=${prefs.popups ? '1' : '0'}`,
         `--zaslon-sb=${prefs.sponsorBlock ? '1' : '0'}`,
         `--zaslon-sec=${prefs.securityLevel || 'standard'}`,
+        `--zaslon-identity=${normalizeIdentityMode(prefs.identityMode)}`,
         `--zaslon-chrome-major=${UNIFORM_CHROME_MAJOR}`,
         `--zaslon-letterbox=${prefs.letterbox ? '1' : '0'}`,
         `--zaslon-lang=${getLang()}`,
@@ -1086,6 +1285,7 @@ function createView(id, container) {
     popups: prefs.popups,
     sponsorBlock: prefs.sponsorBlock,
     securityLevel: prefs.securityLevel,
+    identityMode: normalizeIdentityMode(prefs.identityMode),
     lang: prefs.lang,
     rgxEnabled: !!prefs.rgxEnabled,
     rgxPreset: prefs.rgxPreset || 'std',
@@ -1185,6 +1385,17 @@ function createView(id, container) {
   });
   wc.on('did-fail-load', (_e, code, desc, url, isMain) => {
     if (isMain && code !== -3 && code !== -27) {
+      // Bazı v3 .onion servisleri yalnızca HTTP (80) dinler; https://<v3>.onion TLS/port hatasında bir kez HTTP'ye düş
+      if (
+        normalizeContainerName(rec.container) === '🧅 Tor Zırhlı' &&
+        /^https:\/\/[a-z2-7]{56}\.onion([:/?#]|$)/i.test(url || '') &&
+        [-102, -107, -113, -200, -201, -202].includes(code) &&
+        rec.onionHttpFallbackTried !== url
+      ) {
+        rec.onionHttpFallbackTried = url;
+        wc.loadURL('http://' + url.slice(8)).catch(() => {});
+        return;
+      }
       if (url && !url.startsWith('data:')) rec.lastFailedUrl = url;
       wc.loadURL(errPage(url, desc, container));
     }
@@ -1363,21 +1574,43 @@ ipcMain.on('nav', async (_e, id, url, container) => {
   rec.view.webContents.loadURL(url).catch(() => {});
 });
 
-// Gerçek BFCache Geri / İleri / Yenile Navigasyonu
-ipcMain.on('goBack', (_e, id) => {
+// Gerçek BFCache Geri / İleri / Yenile Navigasyonu (Tor sekmesinde devre ön-izolasyonu ile)
+async function prepareTorSessionForHistoryOffset(rec, id, delta) {
+  try {
+    if (!rec || normalizeContainerName(rec.container) !== '🧅 Tor Zırhlı') return;
+    const wc = rec.view && rec.view.webContents;
+    const nh = wc && wc.navigationHistory;
+    if (!nh || typeof nh.getActiveIndex !== 'function' || typeof nh.getEntryAtIndex !== 'function') return;
+    const targetEntry = nh.getEntryAtIndex(nh.getActiveIndex() + delta);
+    const targetUrl = targetEntry && targetEntry.url ? targetEntry.url : '';
+    if (targetUrl && /^https?:\/\//i.test(targetUrl)) {
+      const nextHost = new URL(targetUrl).hostname;
+      if (nextHost && extractRootDomain(nextHost) !== extractRootDomain(rec.firstPartyHost || '')) {
+        rec.firstPartyHost = nextHost;
+        await ensureSessionReady(rec.container, id, nextHost);
+      }
+    }
+  } catch {}
+}
+
+ipcMain.on('goBack', async (_e, id) => {
   const rec = views.get(id);
   if (!rec) return;
   const wc = rec.view.webContents;
   const canBack = wc.navigationHistory ? wc.navigationHistory.canGoBack() : wc.canGoBack();
-  if (canBack) wc.goBack();
+  if (!canBack) return;
+  await prepareTorSessionForHistoryOffset(rec, id, -1);
+  if (!wc.isDestroyed()) wc.goBack();
 });
 
-ipcMain.on('goForward', (_e, id) => {
+ipcMain.on('goForward', async (_e, id) => {
   const rec = views.get(id);
   if (!rec) return;
   const wc = rec.view.webContents;
   const canFwd = wc.navigationHistory ? wc.navigationHistory.canGoForward() : wc.canGoForward();
-  if (canFwd) wc.goForward();
+  if (!canFwd) return;
+  await prepareTorSessionForHistoryOffset(rec, id, 1);
+  if (!wc.isDestroyed()) wc.goForward();
 });
 
 ipcMain.on('reloadTab', (_e, id) => {
@@ -1620,7 +1853,12 @@ ipcMain.on('prefs', async (_e, p) => {
   const prevDpiMode = prefs.dpiMode;
   const prevDpiSplit = prefs.dpiSplitProfile;
   const prevLang = prefs.lang || 'tr';
+  const prevIdentityMode = normalizeIdentityMode(prefs.identityMode);
   Object.assign(prefs, p);
+  prefs.identityMode = normalizeIdentityMode(prefs.identityMode);
+  if (prefs.identityMode !== prevIdentityMode) {
+    applyIdentityToAllSessions();
+  }
   prefs.lang = normalizeLang(prefs.lang);
   if (prefs.lang !== prevLang || prefs.lang !== getLang()) {
     setLang(prefs.lang);
@@ -1668,7 +1906,14 @@ ipcMain.on('prefs', async (_e, p) => {
   if (torManager) {
     if (typeof prefs.allowExternalTor === 'boolean') torManager.allowExternalTor = prefs.allowExternalTor;
     if (typeof prefs.clearTorDataOnExit === 'boolean') torManager.clearTorDataOnExit = prefs.clearTorDataOnExit;
+    if (Array.isArray(prefs.torBridges) && typeof torManager.setBridges === 'function') {
+      torManager.setBridges(prefs.torBridges);
+    }
   }
+  try {
+    const secMarker = path.join(app.getPath('userData'), 'sec-level.txt');
+    fs.writeFileSync(secMarker, String(prefs.securityLevel || 'standard'), 'utf8');
+  } catch {}
 
   views.forEach(r => {
     const wc = r.view.webContents;
@@ -1679,6 +1924,7 @@ ipcMain.on('prefs', async (_e, p) => {
       popups: prefs.popups,
       sponsorBlock: prefs.sponsorBlock,
       securityLevel: prefs.securityLevel,
+      identityMode: normalizeIdentityMode(prefs.identityMode),
       lang: prefs.lang,
       rgxEnabled: !!prefs.rgxEnabled,
       rgxPreset: prefs.rgxPreset || 'std',
@@ -2052,14 +2298,15 @@ async function resolveMetaSearchRuntimeOpts(sender, optsOrSearx) {
       }
     }
   }
-  if (!tabRec && active) tabRec = views.get(active) || null;
+  if (!tabRec && active && !opts.tabId && !opts.container) tabRec = views.get(active) || null;
 
-  const isTorTab = normalizeContainerName(tabRec?.container) === '🧅 Tor Zırhlı';
+  const tabContainer = opts.container || tabRec?.container;
+  const isTorTab = Boolean(opts.isTorTab ?? (normalizeContainerName(tabContainer) === '🧅 Tor Zırhlı'));
   const routing = String(opts.routing || prefs.metaSearchRouting || 'tab').toLowerCase();
   const requireTor = Boolean(opts.requireTor ?? prefs.metaSearchRequireTor);
   const regional = Boolean(opts.regional ?? prefs.metaSearchRegional);
   const torConnected = Boolean(torManager && torManager.state === 'connected');
-  const shouldUseTor = isTorTab || routing === 'tor' || requireTor || (torConnected && routing === 'tab');
+  const shouldUseTor = (isTorTab || routing === 'tor' || requireTor || (torConnected && routing === 'tab')) && (torConnected || requireTor);
 
   let routedVia = shouldUseTor ? 'tor' : 'ephemeral';
   let fetchFn;
@@ -2070,7 +2317,7 @@ async function resolveMetaSearchRuntimeOpts(sender, optsOrSearx) {
         throw new Error(t('search.errTorRequired'));
       };
     } else {
-      const searchTabKey = tabRec?.id ? `search-tab-${tabRec.id}` : 'search-tab-global';
+      const searchTabKey = tabRec?.id || opts.tabId ? `search-tab-${tabRec?.id || opts.tabId}` : 'search-tab-global';
       const torSes = await ensureSessionReady('🧅 Tor Zırhlı', searchTabKey, `${searchTabKey}.local`);
       fetchFn = (url, o) => torSes.fetch(url, { ...(o || {}), credentials: 'omit' });
     }
@@ -2090,7 +2337,7 @@ async function resolveMetaSearchRuntimeOpts(sender, optsOrSearx) {
     providers,
     regional,
     routedVia,
-    requireTor: shouldUseTor,
+    requireTor: Boolean(shouldUseTor && !torConnected),
     torConnected,
     torError: t('search.errTorRequired')
   };
@@ -2282,7 +2529,14 @@ ipcMain.handle('panicBurn', async () => {
   fsView = false;
 
   // 4. Canlı İstek Denetçisi, Medya Yakalayıcı, Tor devresini ve oturum parmak izi tuzunu sıfırla
-  if (adblockEngine) adblockEngine.clearAllReports();
+  if (adblockEngine) {
+    adblockEngine.clearAllReports();
+    adblockEngine.clearCustomRules?.();
+  }
+  try {
+    const secMarker = path.join(app.getPath('userData'), 'sec-level.txt');
+    if (fs.existsSync(secMarker)) fs.unlinkSync(secMarker);
+  } catch {}
   if (streamSniffer) streamSniffer.clearAll();
   if (torManager) await torManager.newIdentity().catch(() => {});
   sessionSalt = crypto.randomBytes(12).toString('hex');
@@ -2473,8 +2727,8 @@ async function buildTabDownloadContext(targetUrl) {
     ctx.referer = wc.getURL() || '';
     ctx.userAgent =
       normalizeContainerName(rec.container) === '🧅 Tor Zırhlı'
-        ? UNIFORM_BROWSER_UA
-        : (wc.getUserAgent() || UNIFORM_BROWSER_UA);
+        ? getActiveBrowserUserAgent()
+        : (wc.getUserAgent() || getActiveBrowserUserAgent());
     if (streamSniffer && active) {
       ctx.fallbackStreams = streamSniffer
         .getTabStreams(active)
@@ -2735,6 +2989,9 @@ ipcMain.handle('vaultUnlock', (_e, password) => {
   if (!encryptedVault) return { ok: false, error: t('err.vaultNotReady') };
   const res = encryptedVault.unlock(password);
   if (!res.ok) return res;
+  if (adblockEngine && typeof adblockEngine.reloadRulesFromVault === 'function') {
+    adblockEngine.reloadRulesFromVault();
+  }
   const all = encryptedVault.getAll();
   const status = encryptedVault.getStatus();
   send('vault-status', status);
@@ -2946,6 +3203,7 @@ function createWindow() {
   adblockEngine = new AdblockAndInspectorEngine({
     userDataPath,
     resourcesPath,
+    vault: encryptedVault,
     onStatsIncrement: (type, count) => {
       if (type === 'ads') blockedDelta += count;
     },
@@ -3023,6 +3281,7 @@ function createWindow() {
     resourcesPath,
     allowExternalTor: !!prefs.allowExternalTor,
     clearTorDataOnExit: !!prefs.clearTorDataOnExit,
+    bridges: Array.isArray(prefs.torBridges) ? prefs.torBridges : [],
     fetchFn: async (url, opts) => {
       const rt = await resolveServiceRuntimeNetwork(null, { forceNonTor: true });
       return rt.fetchFn(url, opts);
@@ -3030,21 +3289,50 @@ function createWindow() {
     onStatusChange: st => {
       send('tor-status', st);
       if (st && st.state === 'connected') {
-        for (const [tabId, rec] of views.entries()) {
-          if (normalizeContainerName(rec.container) === '🧅 Tor Zırhlı' && rec.pendingTorUrl) {
-            const targetUrl = rec.pendingTorUrl;
-            rec.pendingTorUrl = '';
-            let fpHost = '';
-            try {
-              fpHost = new URL(targetUrl).hostname;
-            } catch {}
-            ensureSessionReady(rec.container, tabId, fpHost)
-              .then(() => {
-                if (rec.view && !rec.view.webContents.isDestroyed()) {
-                  rec.view.webContents.loadURL(targetUrl).catch(() => {});
-                }
-              })
-              .catch(() => {});
+        applyNetworkProxiesToAllSessions()
+          .catch(() => {})
+          .finally(() => {
+            for (const [tabId, rec] of views.entries()) {
+              if (normalizeContainerName(rec.container) === '🧅 Tor Zırhlı' && rec.pendingTorUrl) {
+                const targetUrl = rec.pendingTorUrl;
+                rec.pendingTorUrl = '';
+                rec._lastErrPct = undefined;
+                rec._lastErrState = undefined;
+                let fpHost = '';
+                try {
+                  fpHost = new URL(targetUrl).hostname;
+                } catch {}
+                ensureSessionReady(rec.container, tabId, fpHost)
+                  .then(() => {
+                    if (rec.view && !rec.view.webContents.isDestroyed()) {
+                      rec.view.webContents.loadURL(targetUrl).catch(() => {});
+                    }
+                  })
+                  .catch(() => {});
+              }
+            }
+          });
+      } else if (st && (st.state === 'starting' || st.state === 'installing')) {
+        const pct = Number(st.bootstrapPct || 0);
+        for (const [_tabId, rec] of views.entries()) {
+          if (normalizeContainerName(rec.container) === '🧅 Tor Zırhlı' && rec.pendingTorUrl && rec.view && !rec.view.webContents.isDestroyed()) {
+            const curUrl = rec.view.webContents.getURL() || '';
+            if (
+              curUrl.startsWith('data:text/html') &&
+              (st.state !== rec._lastErrState || Math.abs(pct - (rec._lastErrPct ?? -100)) >= 15)
+            ) {
+              rec._lastErrState = st.state;
+              rec._lastErrPct = pct;
+              const progMsg = st.bootstrapSummary || `${t('tor.starting')} (%${pct})`;
+              rec.view.webContents.loadURL(errPage(rec.pendingTorUrl, progMsg, rec.container)).catch(() => {});
+            }
+          }
+        }
+      } else if (st && st.state === 'error') {
+        for (const [_tabId, rec] of views.entries()) {
+          if (normalizeContainerName(rec.container) === '🧅 Tor Zırhlı' && rec.pendingTorUrl && rec.view && !rec.view.webContents.isDestroyed()) {
+            const errMsg = st.lastError && st.lastError !== 'TOR_BINARY_MISSING' ? st.lastError : st.bootstrapSummary || t('tor.off');
+            rec.view.webContents.loadURL(errPage(rec.pendingTorUrl, errMsg, rec.container)).catch(() => {});
           }
         }
       }
@@ -3145,6 +3433,32 @@ function createWindow() {
     win = null;
   });
 }
+
+app.on('certificate-error', (e, wc, url, _error, _cert, callback) => {
+  try {
+    let matchedRec = null;
+    for (const rec of views.values()) {
+      if (rec && rec.view && !rec.view.webContents.isDestroyed() && rec.view.webContents.id === wc.id) {
+        matchedRec = rec;
+        break;
+      }
+    }
+    const hostname = new URL(url).hostname.toLowerCase();
+    const isV3Onion = /^[a-z2-7]{56}\.onion$/i.test(hostname);
+    if (
+      matchedRec &&
+      normalizeContainerName(matchedRec.container) === '🧅 Tor Zırhlı' &&
+      torManager &&
+      torManager.state === 'connected' &&
+      isV3Onion
+    ) {
+      e.preventDefault();
+      callback(true);
+      return;
+    }
+  } catch {}
+  callback(false);
+});
 
 app.on('second-instance', () => {
   if (win) {

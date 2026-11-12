@@ -300,9 +300,10 @@ const COSMETIC_BASE_CSS = `
 `;
 
 class AdblockAndInspectorEngine {
-  constructor({ userDataPath, resourcesPath, onStatsIncrement, onInspectorUpdate }) {
+  constructor({ userDataPath, resourcesPath, vault, onStatsIncrement, onInspectorUpdate }) {
     this.userDataPath = userDataPath;
     this.resourcesPath = resourcesPath || '';
+    this.vault = vault || null;
     this.cachePath = path.join(userDataPath, 'zaslon-adblock-cache.bin');
     this.bundledSnapshotPath = [
       this.resourcesPath ? path.join(this.resourcesPath, 'adblock-snapshot.bin') : '',
@@ -341,32 +342,63 @@ class AdblockAndInspectorEngine {
 
   _loadCustomRules() {
     try {
+      let loadedFromVault = false;
+      if (this.vault && typeof this.vault.isUnlocked === 'function' ? this.vault.isUnlocked() : (this.vault && !this.vault.isLocked?.())) {
+        const vData = this.vault.get('shield_rules', null);
+        if (vData && typeof vData === 'object') {
+          if (Array.isArray(vData.siteWhitelist)) this.siteWhitelist = new Set(vData.siteWhitelist);
+          if (vData.customDomainRules && typeof vData.customDomainRules === 'object') {
+            this.customDomainRules = vData.customDomainRules;
+          }
+          loadedFromVault = true;
+        }
+      }
       if (fs.existsSync(this.rulesConfigPath)) {
         const data = JSON.parse(fs.readFileSync(this.rulesConfigPath, 'utf8'));
-        if (Array.isArray(data.siteWhitelist)) {
-          this.siteWhitelist = new Set(data.siteWhitelist);
+        if (!loadedFromVault) {
+          if (Array.isArray(data.siteWhitelist)) {
+            this.siteWhitelist = new Set(data.siteWhitelist);
+          }
+          if (data.customDomainRules && typeof data.customDomainRules === 'object') {
+            this.customDomainRules = data.customDomainRules;
+          }
         }
-        if (data.customDomainRules && typeof data.customDomainRules === 'object') {
-          this.customDomainRules = data.customDomainRules;
+        // Eski düz metin kural dosyası varsa kasaya taşıyıp düz metni diskten temizle
+        if (this.vault && !this.vault.isLocked?.()) {
+          this._saveCustomRules();
         }
       }
     } catch {}
   }
 
-  _saveCustomRules() {
+  reloadRulesFromVault() {
+    this._loadCustomRules();
+  }
+
+  clearCustomRules() {
+    this.siteWhitelist.clear();
+    this.customDomainRules = {};
     try {
-      fs.writeFileSync(
-        this.rulesConfigPath,
-        JSON.stringify(
-          {
-            siteWhitelist: [...this.siteWhitelist],
-            customDomainRules: this.customDomainRules
-          },
-          null,
-          2
-        ),
-        'utf8'
-      );
+      if (fs.existsSync(this.rulesConfigPath)) fs.unlinkSync(this.rulesConfigPath);
+    } catch {}
+  }
+
+  _saveCustomRules() {
+    const payload = {
+      siteWhitelist: [...this.siteWhitelist],
+      customDomainRules: this.customDomainRules
+    };
+    try {
+      if (this.vault && !this.vault.isLocked?.()) {
+        this.vault.set('shield_rules', payload);
+        try {
+          if (fs.existsSync(this.rulesConfigPath)) fs.unlinkSync(this.rulesConfigPath);
+        } catch {}
+        return;
+      }
+      if (!this.vault) {
+        fs.writeFileSync(this.rulesConfigPath, JSON.stringify(payload, null, 2), 'utf8');
+      }
     } catch {}
   }
 
@@ -527,8 +559,8 @@ class AdblockAndInspectorEngine {
 
     const isThirdParty =
       Boolean(pageHost) && getBaseDomain(reqHost) !== getBaseDomain(pageHost);
-    const siteWhitelisted = this.isSiteWhitelisted(pageHost);
     const securityLevel = prefs.securityLevel || 'standard';
+    const siteWhitelisted = securityLevel === 'safest' ? false : this.isSiteWhitelisted(pageHost);
 
     // 1. Zırh: Telemetri Güvenlik Duvarı (Her zaman çalışır, site beyaz listede olsa bile)
     if (prefs.tele !== false && isTelemetryHost(reqHost)) {

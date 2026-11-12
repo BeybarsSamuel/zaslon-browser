@@ -60,9 +60,10 @@ const TELEMETRY_HOSTS = new Set([
 
 /**
  * Electron app.whenReady() öncesinde çağrılmalıdır.
- * Chromium'un arka planda dış sunucularla konuşmasını donanım/motor seviyesinde engeller.
+ * Chromium'un arka planda dış sunucularla konuşmasını, ağ durumu korelasyonunu ve WebRTC sızıntısını motor seviyesinde engeller.
  */
-function applyChromiumHardeningFlags(app) {
+function applyChromiumHardeningFlags(app, opts = {}) {
+  const secLevel = String(opts?.securityLevel || 'standard').toLowerCase();
   const switches = [
     ['disable-background-networking'],
     ['disable-component-update'],
@@ -84,9 +85,18 @@ function applyChromiumHardeningFlags(app) {
     ['disable-remote-playback-api'],
     ['disable-notifications'],
     ['dns-prefetch-disable'],
+    ['force-color-profile', 'srgb'],
     ['host-resolver-rules', 'MAP dns.quad9.net 9.9.9.9, MAP dns.mullvad.net 194.242.2.2, MAP dns.adguard-dns.com 94.140.14.14, MAP cloudflare-dns.com 1.1.1.1'],
     ['webrtc-ip-handling-policy', 'disable_non_proxied_udp'],
     ['enforce-webrtc-ip-permission-check'],
+    [
+      'enable-features',
+      [
+        'SplitCacheByNetworkIsolationKey',
+        'PartitionConnectionsByNetworkIsolationKey',
+        'SplitCodeCacheByNetworkIsolationKey'
+      ].join(',')
+    ],
     [
       'disable-features',
       [
@@ -101,6 +111,8 @@ function applyChromiumHardeningFlags(app) {
         'InterestFeedContentSuggestions',
         'InterestFeedV2',
         'PrivacySandboxSettings4',
+        'PrivacySandboxAdsAPIs',
+        'FencedFrames',
         'BrowsingTopics',
         'BrowsingTopicsParameters',
         'TopicsAPI',
@@ -128,10 +140,17 @@ function applyChromiumHardeningFlags(app) {
         'ComputePressure',
         'DigitalGoods',
         'PaymentRequest',
-        'GenericSensorExtraClasses'
+        'GenericSensorExtraClasses',
+        'FontAccess',
+        'WindowManagement',
+        'NetworkQualityEstimator'
       ].join(',')
     ]
   ];
+
+  if (secLevel === 'safer' || secLevel === 'safest') {
+    switches.push(['js-flags', '--jitless']);
+  }
 
   for (const [key, val] of switches) {
     if (val !== undefined) app.commandLine.appendSwitch(key, val);
@@ -191,17 +210,98 @@ function computeLetterboxBounds(bounds, enabled = false) {
  * Electron'un gerçek Chromium motor ana sürümünü döndürür (TLS/HTTP2/JS izi ile UA uyumsuzluğunu önler).
  * Electron dışı Node testlerinde güvenli olarak '131' döner.
  */
+const TOR_BROWSER_ESR_MAJOR = '128';
+
+function getZaslonAppVersion() {
+  try {
+    const pkg = require('../../package.json');
+    if (pkg && pkg.version) return String(pkg.version);
+  } catch {}
+  return '1.0.0';
+}
+
 function getUniformChromeMajor() {
   const raw = (typeof process !== 'undefined' && process.versions && process.versions.chrome) ? String(process.versions.chrome) : '';
   const m = raw.match(/^(\d+)/);
   return m ? m[1] : '131';
 }
 
+function normalizeIdentityMode(mode) {
+  const m = String(mode || '').trim().toLowerCase();
+  if (m === 'tor' || m === 'zaslon' || m === 'chrome') return m;
+  return 'tor';
+}
+
+/**
+ * Seçili tarayıcı kimliği ('tor' | 'zaslon' | 'chrome') için HTTP + JS uyumlu profil döndürür.
+ */
+function getIdentityProfile(mode = 'tor', chromeMajorArg = null, zaslonVersionArg = null) {
+  const normMode = normalizeIdentityMode(mode);
+  const chromeMajor = String(chromeMajorArg || getUniformChromeMajor()).replace(/[^\d]/g, '') || '131';
+  const zaslonVersion = String(zaslonVersionArg || getZaslonAppVersion()).replace(/[^0-9A-Za-z._-]/g, '') || '1.0.0';
+
+  if (normMode === 'tor') {
+    const ua = `Mozilla/5.0 (Windows NT 10.0; rv:${TOR_BROWSER_ESR_MAJOR}.0) Gecko/20100101 Firefox/${TOR_BROWSER_ESR_MAJOR}.0`;
+    return {
+      mode: 'tor',
+      label: 'Tor Browser',
+      ua,
+      appVersion: '5.0 (Windows)',
+      vendor: '',
+      platform: 'Win32',
+      oscpu: 'Windows NT 10.0; Win64; x64',
+      productSub: '20100101',
+      buildID: '20181001000000',
+      hideUserAgentData: true,
+      hideWindowChrome: true,
+      chromeMajor,
+      zaslonVersion
+    };
+  }
+
+  if (normMode === 'zaslon') {
+    const appVer = `5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeMajor}.0.0.0 Safari/537.36 Zaslon/${zaslonVersion}`;
+    return {
+      mode: 'zaslon',
+      label: 'Zaslon Browser',
+      ua: `Mozilla/${appVer}`,
+      appVersion: appVer,
+      vendor: 'Google Inc.',
+      platform: 'Win32',
+      oscpu: undefined,
+      productSub: '20030107',
+      buildID: undefined,
+      hideUserAgentData: false,
+      hideWindowChrome: false,
+      chromeMajor,
+      zaslonVersion
+    };
+  }
+
+  const chromeAppVer = `5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeMajor}.0.0.0 Safari/537.36`;
+  return {
+    mode: 'chrome',
+    label: 'Chromium',
+    ua: `Mozilla/${chromeAppVer}`,
+    appVersion: chromeAppVer,
+    vendor: 'Google Inc.',
+    platform: 'Win32',
+    oscpu: undefined,
+    productSub: '20030107',
+    buildID: undefined,
+    hideUserAgentData: false,
+    hideWindowChrome: false,
+    chromeMajor,
+    zaslonVersion
+  };
+}
+
 /**
  * Tüm ağ katmanları ve servis istekleri için tek tip, motorla senkronize User-Agent üretir.
+ * Argümansız çağrıldığında mevcut Chromium UA uyumluluğunu korur.
  */
-function getUniformBrowserUserAgent() {
-  return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${getUniformChromeMajor()}.0.0.0 Safari/537.36`;
+function getUniformBrowserUserAgent(mode = 'chrome', chromeMajorArg = null, zaslonVersionArg = null) {
+  return getIdentityProfile(mode, chromeMajorArg, zaslonVersionArg).ua;
 }
 
 module.exports = {
@@ -211,5 +311,9 @@ module.exports = {
   computeLetterboxBounds,
   getUniformChromeMajor,
   getUniformBrowserUserAgent,
+  getZaslonAppVersion,
+  normalizeIdentityMode,
+  getIdentityProfile,
+  TOR_BROWSER_ESR_MAJOR,
   TELEMETRY_HOSTS
 };

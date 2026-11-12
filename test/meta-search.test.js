@@ -129,6 +129,29 @@ test('performMetaSearch with requireTor fails closed with 0 HTTP calls when Tor 
   assert.equal(called, 0);
 });
 
+test('performMetaSearch with requireTor false succeeds when Tor is disconnected and allows ephemeral fallback', async () => {
+  let called = 0;
+  const mockFetch = async () => {
+    called++;
+    return {
+      ok: true,
+      async text() {
+        return '<div class="result web-result"><a class="result__a" href="https://example.org/clean">Clean</a></div>';
+      }
+    };
+  };
+
+  const res = await performMetaSearch('clearnet query', {
+    fetchFn: mockFetch,
+    requireTor: false,
+    torConnected: false
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.blockedByTor, undefined);
+  assert.equal(res.routedVia, 'ephemeral');
+  assert.ok(called > 0);
+});
+
 test('queryDuckDuckGo omits kl by default and unwrapSearchRedirect resolves DDG/Yahoo/Bing wrappers locally', async () => {
   const seen = [];
   await queryDuckDuckGo(
@@ -153,4 +176,23 @@ test('queryDuckDuckGo omits kl by default and unwrapSearchRedirect resolves DDG/
     unwrapSearchRedirect('https://r.search.yahoo.com/_ylt=1/RU=https%3A%2F%2Fy.example%2F1/RK=2/RS=3'),
     'https://y.example/1'
   );
+});
+
+test('main.js and ui.html properly synchronize metaSearchRequireTor, metaSearchRouting, and ephemeral container switch', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const uiSrc = fs.readFileSync(path.join(__dirname, '..', 'ui.html'), 'utf8');
+
+  // Verify main.js uses tabContainer / container from opts and guards shouldUseTor with (torConnected || requireTor)
+  assert.ok(mainSrc.includes('const tabContainer = opts.container || tabRec?.container;'));
+  assert.ok(mainSrc.includes('(torConnected || requireTor)'));
+  assert.ok(mainSrc.includes('requireTor: Boolean(shouldUseTor && !torConnected)'));
+
+  // Verify ui.html passes container & isTorTab, syncs routing on toggle, and provides switchToIsoBtn
+  assert.ok(uiSrc.includes('container:tab.container'));
+  assert.ok(uiSrc.includes('isTorTab'));
+  assert.ok(uiSrc.includes("p.metaSearchRouting=p.metaSearchRequireTor?'tor':'tab'"));
+  assert.ok(uiSrc.includes('zspSwitchNormalBtn'));
+  assert.ok(uiSrc.includes('search.switchToIsoBtn'));
 });

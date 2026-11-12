@@ -213,6 +213,7 @@ const MESSAGES = {
     'search.wikiSource': 'Vikipedi Özgür Ansiklopedi',
     'search.infoCard': 'Bilgi Kartı',
     'search.errTorRequired': 'Zaslon Meta için Tor zorunlu modu açık ancak Tor bağlantısı hazır değil. Gerçek IP sızıntısını önlemek için arama engellendi.',
+    'search.switchToIsoBtn': '🛡️ İzole Oturum ile Ara (Tor Olmadan)',
 
     // Şifreli Kasa
     'vault.errPasswordRequired': 'Ana parola gerekli',
@@ -492,6 +493,7 @@ const MESSAGES = {
     'search.wikiSource': 'Wikipedia The Free Encyclopedia',
     'search.infoCard': 'Info Card',
     'search.errTorRequired': 'Tor-required mode is active for Zaslon Meta, but the Tor circuit is not ready. Search blocked (fail-closed) to prevent real IP exposure.',
+    'search.switchToIsoBtn': '🛡️ Search in Ephemeral Session (Without Tor)',
 
     'vault.errPasswordRequired': 'Master password is required',
     'vault.errKeyDataMissing': 'Vault key data not found',
@@ -768,6 +770,7 @@ const MESSAGES = {
     'search.wikiSource': 'Википедия — свободная энциклопедия',
     'search.infoCard': 'Инфокарточка',
     'search.errTorRequired': 'Для Zaslon Meta включён обязательный режим Tor, но сеть Tor не готова. Поиск заблокирован для защиты реального IP.',
+    'search.switchToIsoBtn': '🛡️ Искать в изолированной сессии (без Tor)',
 
     'vault.errPasswordRequired': 'Требуется мастер-пароль',
     'vault.errKeyDataMissing': 'Данные ключа хранилища не найдены',
@@ -1044,6 +1047,7 @@ const MESSAGES = {
     'search.wikiSource': 'Wikipedia – Die freie Enzyklopädie',
     'search.infoCard': 'Infokarte',
     'search.errTorRequired': 'Für Zaslon Meta ist der Tor-Zwang aktiviert, aber die Tor-Verbindung ist nicht bereit. Suche zum IP-Schutz blockiert (fail-closed).',
+    'search.switchToIsoBtn': '🛡️ In isolierter Sitzung suchen (ohne Tor)',
 
     'vault.errPasswordRequired': 'Master-Passwort erforderlich',
     'vault.errKeyDataMissing': 'Tresor-Schlüsseldaten nicht gefunden',

@@ -22,6 +22,7 @@ let popupsEnabled = getArg('--zaslon-popups=', '1') !== '0';
 let sponsorBlockEnabled = getArg('--zaslon-sb=', '1') !== '0';
 let videoHoverHudEnabled = getArg('--zaslon-vhud=', '1') !== '0';
 let securityLevel = getArg('--zaslon-sec=', 'standard');
+let identityMode = getArg('--zaslon-identity=', 'chrome');
 const chromeMajor = getArg('--zaslon-chrome-major=', '131');
 let isTorTab = getArg('--zaslon-tor=', '0') === '1';
 let letterboxEnabled = getArg('--zaslon-letterbox=', '0') === '1';
@@ -128,18 +129,36 @@ function pt(key, params = {}) {
  * - Aynı sitedeki çoklu okumalar tutarlıdır (anti-spoof dedektörlerine yakalanmaz).
  * - Farklı siteler tamamen farklı donanım/canvas imzası görür (siteler arası takip imkansızlaşır).
  */
-function buildMainWorldShieldScript(salt, secLevel, isTor = false, letterbox = false, chromeMajorArg = '131') {
+function buildMainWorldShieldScript(salt, secLevel, isTor = false, letterbox = false, chromeMajorArg = '131', identityModeArg = 'chrome', zaslonVersionArg = '1.0.0') {
   const strictMode = Boolean(isTor || secLevel === 'safest');
   const screenMaskMode = Boolean(strictMode || letterbox);
   const safeChromeMajor = String(chromeMajorArg || '131').replace(/[^\d]/g, '') || '131';
+  const rawIdMode = String(identityModeArg || 'chrome').trim().toLowerCase();
+  const safeIdentityMode = (rawIdMode === 'tor' || rawIdMode === 'zaslon' || rawIdMode === 'chrome') ? rawIdMode : 'chrome';
+  const safeZaslonVer = String(zaslonVersionArg || '1.0.0').replace(/[^0-9A-Za-z._-]/g, '') || '1.0.0';
   return `(function() {
     try {
       const strictMode = ${JSON.stringify(strictMode)};
       const screenMaskMode = ${JSON.stringify(screenMaskMode)};
       const secLevel = ${JSON.stringify(secLevel)};
       const chromeMajor = ${JSON.stringify(safeChromeMajor)};
-      const uniformUa = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + chromeMajor + '.0.0.0 Safari/537.36';
-      const uniformAppVer = '5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + chromeMajor + '.0.0.0 Safari/537.36';
+      const identityMode = ${JSON.stringify(safeIdentityMode)};
+      const zaslonVersion = ${JSON.stringify(safeZaslonVer)};
+      const uniformUa = identityMode === 'tor'
+        ? 'Mozilla/5.0 (Windows NT 10.0; rv:128.0) Gecko/20100101 Firefox/128.0'
+        : (identityMode === 'zaslon'
+          ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + chromeMajor + '.0.0.0 Safari/537.36 Zaslon/' + zaslonVersion
+          : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + chromeMajor + '.0.0.0 Safari/537.36');
+      const uniformAppVer = identityMode === 'tor'
+        ? '5.0 (Windows)'
+        : (identityMode === 'zaslon'
+          ? '5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + chromeMajor + '.0.0.0 Safari/537.36 Zaslon/' + zaslonVersion
+          : '5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + chromeMajor + '.0.0.0 Safari/537.36');
+      const uniformVendor = identityMode === 'tor' ? '' : 'Google Inc.';
+      const uniformProductSub = identityMode === 'tor' ? '20100101' : '20030107';
+      const uniformOscpu = identityMode === 'tor' ? 'Windows NT 10.0; Win64; x64' : undefined;
+      const uniformBuildId = identityMode === 'tor' ? '20181001000000' : undefined;
+      const primaryBrandName = identityMode === 'zaslon' ? 'Zaslon Browser' : 'Google Chrome';
       const host = (typeof location !== 'undefined' && location && location.hostname) ? location.hostname : 'local';
       const seedStr = host + '::' + ${JSON.stringify(salt)};
       let seed = 2166136261 >>> 0;
@@ -231,50 +250,68 @@ function buildMainWorldShieldScript(salt, secLevel, isTor = false, letterbox = f
             } catch {}
           };
 
-          defineNav('doNotTrack', () => '1');
+          defineNav('doNotTrack', () => (strictMode ? null : '1'));
           defineNav('globalPrivacyControl', () => true);
           defineNav('webdriver', () => false);
           defineNav('hardwareConcurrency', () => (strictMode ? 4 : 8));
           defineNav('deviceMemory', () => (strictMode ? 4 : 8));
           defineNav('userAgent', () => uniformUa);
           defineNav('appVersion', () => uniformAppVer);
-          defineNav('vendor', () => 'Google Inc.');
+          defineNav('vendor', () => uniformVendor);
+          defineNav('productSub', () => uniformProductSub);
+          if (identityMode === 'tor') {
+            defineNav('oscpu', () => uniformOscpu);
+            defineNav('buildID', () => uniformBuildId);
+            try {
+              if ('chrome' in win) {
+                SafeObject.defineProperty(win, 'chrome', {
+                  get: registerNative(() => undefined, 'get chrome'),
+                  configurable: true
+                });
+              }
+            } catch {}
+          }
 
-          try {
-            const uaBrands = SafeObject.freeze([
-              SafeObject.freeze({ brand: 'Chromium', version: chromeMajor }),
-              SafeObject.freeze({ brand: 'Not-A.Brand', version: '24' }),
-              SafeObject.freeze({ brand: 'Google Chrome', version: chromeMajor })
-            ]);
-            const fakeUaData = {
-              brands: uaBrands,
-              mobile: false,
-              platform: 'Windows',
-              getHighEntropyValues: registerNative((hints) => {
-                const res = { brands: uaBrands, mobile: false, platform: 'Windows' };
-                const list = Array.isArray(hints) ? hints : [];
-                for (let i = 0; i < list.length; i++) {
-                  const h = list[i];
-                  if (h === 'architecture') res.architecture = 'x86';
-                  else if (h === 'bitness') res.bitness = '64';
-                  else if (h === 'model') res.model = '';
-                  else if (h === 'platformVersion') res.platformVersion = '15.0.0';
-                  else if (h === 'uaFullVersion') res.uaFullVersion = chromeMajor + '.0.0.0';
-                  else if (h === 'fullVersionList') {
-                    res.fullVersionList = uaBrands.map((b) => ({
-                      brand: b.brand,
-                      version: b.brand === 'Not-A.Brand' ? '24.0.0.0' : chromeMajor + '.0.0.0'
-                    }));
-                  } else if (h === 'wow64') {
-                    res.wow64 = false;
+          if (strictMode || identityMode === 'tor') {
+            // HTTP sec-ch-ua* basliklari Tor Browser kimliginde / Strict modda yok; JS userAgentData celiskisini kaldir
+            defineNav('userAgentData', () => undefined);
+          } else {
+            try {
+              const uaBrands = SafeObject.freeze([
+                SafeObject.freeze({ brand: 'Chromium', version: chromeMajor }),
+                SafeObject.freeze({ brand: 'Not-A.Brand', version: '24' }),
+                SafeObject.freeze({ brand: primaryBrandName, version: identityMode === 'zaslon' ? '1' : chromeMajor })
+              ]);
+              const fakeUaData = {
+                brands: uaBrands,
+                mobile: false,
+                platform: 'Windows',
+                getHighEntropyValues: registerNative((hints) => {
+                  const res = { brands: uaBrands, mobile: false, platform: 'Windows' };
+                  const list = Array.isArray(hints) ? hints : [];
+                  for (let i = 0; i < list.length; i++) {
+                    const h = list[i];
+                    if (h === 'architecture') res.architecture = 'x86';
+                    else if (h === 'bitness') res.bitness = '64';
+                    else if (h === 'model') res.model = '';
+                    else if (h === 'platformVersion') res.platformVersion = '15.0.0';
+                    else if (h === 'uaFullVersion') res.uaFullVersion = chromeMajor + '.0.0.0';
+                    else if (h === 'fullVersionList') {
+                      res.fullVersionList = uaBrands.map((b) => ({
+                        brand: b.brand,
+                        version: b.brand === 'Not-A.Brand' ? '24.0.0.0' : (b.brand === 'Zaslon Browser' ? zaslonVersion : chromeMajor + '.0.0.0')
+                      }));
+                    } else if (h === 'wow64') {
+                      res.wow64 = false;
+                    }
                   }
-                }
-                return SafePromise.resolve(res);
-              }, 'getHighEntropyValues'),
-              toJSON: registerNative(() => ({ brands: uaBrands, mobile: false, platform: 'Windows' }), 'toJSON')
-            };
-            defineNav('userAgentData', () => fakeUaData);
-          } catch {}
+                  return SafePromise.resolve(res);
+                }, 'getHighEntropyValues'),
+                toJSON: registerNative(() => ({ brands: uaBrands, mobile: false, platform: 'Windows' }), 'toJSON')
+              };
+              defineNav('userAgentData', () => fakeUaData);
+            } catch {}
+          }
 
           if (typeof win.navigator.getGamepads === 'function') {
             try {
@@ -285,14 +322,21 @@ function buildMainWorldShieldScript(salt, secLevel, isTor = false, letterbox = f
             } catch {}
           }
 
+          for (const basicHwProp of ['connection', 'bluetooth', 'usb', 'hid', 'serial']) {
+            if (basicHwProp in win.navigator) {
+              defineNav(basicHwProp, () => undefined);
+            }
+          }
+          if (typeof win.navigator.getBattery === 'function') {
+            defineNav('getBattery', () => undefined);
+          }
+
           if (strictMode) {
             defineNav('language', () => 'en-US');
             defineNav('languages', () => SafeObject.freeze(['en-US', 'en']));
             defineNav('platform', () => 'Win32');
-            for (const hwProp of ['connection', 'bluetooth', 'usb', 'hid', 'serial', 'gpu']) {
-              if (hwProp in win.navigator) {
-                defineNav(hwProp, () => undefined);
-              }
+            if ('gpu' in win.navigator) {
+              defineNav('gpu', () => undefined);
             }
             if (win.navigator.mediaDevices) {
               try {
@@ -393,7 +437,7 @@ function buildMainWorldShieldScript(salt, secLevel, isTor = false, letterbox = f
           } catch {}
         }
 
-        /* 2b. Zamanlama Çözünürlüğü Kısıtlama (performance.now) */
+        /* 2b. Zamanlama Çözünürlüğü Kısıtlama (performance.now + strict rAF 60Hz hizalama) */
         if (win.Performance && win.Performance.prototype && win.Performance.prototype.now) {
           try {
             const origPerfNow = win.Performance.prototype.now;
@@ -401,6 +445,19 @@ function buildMainWorldShieldScript(salt, secLevel, isTor = false, letterbox = f
               const raw = origPerfNow.call(this);
               return strictMode ? Math.floor(raw / 2) * 2 : Math.floor(raw * 10) / 10;
             }, 'now');
+          } catch {}
+        }
+        if (strictMode && typeof win.requestAnimationFrame === 'function') {
+          try {
+            const origRaf = win.requestAnimationFrame.bind(win);
+            const STEP_60HZ = 1000 / 60;
+            win.requestAnimationFrame = registerNative(function requestAnimationFrame(cb) {
+              if (typeof cb !== 'function') return origRaf(cb);
+              return origRaf(function (ts) {
+                const quantized = Math.floor(ts / STEP_60HZ) * STEP_60HZ;
+                return cb(quantized);
+              });
+            }, 'requestAnimationFrame');
           } catch {}
         }
 
@@ -507,6 +564,19 @@ function buildMainWorldShieldScript(salt, secLevel, isTor = false, letterbox = f
                 if (/prefers-color-scheme\\s*:\\s*dark/.test(q)) override = false;
                 else if (/prefers-color-scheme\\s*:\\s*light/.test(q)) override = true;
                 else if (/prefers-reduced-motion\\s*:\\s*reduce/.test(q)) override = false;
+                else if (/prefers-reduced-motion\\s*:\\s*no-preference/.test(q)) override = true;
+                else if (/prefers-contrast\\s*:\\s*(more|high|less|low|custom)/.test(q)) override = false;
+                else if (/prefers-contrast\\s*:\\s*no-preference/.test(q)) override = true;
+                else if (/forced-colors\\s*:\\s*active/.test(q)) override = false;
+                else if (/forced-colors\\s*:\\s*none/.test(q)) override = true;
+                else if (/inverted-colors\\s*:\\s*inverted/.test(q)) override = false;
+                else if (/inverted-colors\\s*:\\s*none/.test(q)) override = true;
+                else if (/color-gamut\\s*:\\s*(p3|rec2020)/.test(q)) override = false;
+                else if (/color-gamut\\s*:\\s*srgb/.test(q)) override = true;
+                else if (/(?:^|[^-])any-pointer\\s*:\\s*coarse/.test(q) || /(?:^|[^a-z-])pointer\\s*:\\s*coarse/.test(q)) override = false;
+                else if (/(?:^|[^-])any-pointer\\s*:\\s*fine/.test(q) || /(?:^|[^a-z-])pointer\\s*:\\s*fine/.test(q)) override = true;
+                else if (/(?:^|[^-])any-hover\\s*:\\s*none/.test(q) || /(?:^|[^a-z-])hover\\s*:\\s*none/.test(q)) override = false;
+                else if (/(?:^|[^-])any-hover\\s*:\\s*hover/.test(q) || /(?:^|[^a-z-])hover\\s*:\\s*hover/.test(q)) override = true;
                 if (override !== null && mql && typeof mql === 'object') {
                   try {
                     SafeObject.defineProperty(mql, 'matches', {
@@ -522,6 +592,179 @@ function buildMainWorldShieldScript(salt, secLevel, isTor = false, letterbox = f
 
           try {
             SafeObject.defineProperty(win, 'SharedWorker', { value: undefined, configurable: true });
+          } catch {}
+
+          try {
+            const navTargets = [];
+            if (win.Navigator && win.Navigator.prototype) navTargets.push(win.Navigator.prototype);
+            if (win.navigator) navTargets.push(win.navigator);
+            const emptyList = {
+              length: 0,
+              item: registerNative(() => null, 'item'),
+              namedItem: registerNative(() => null, 'namedItem'),
+              refresh: registerNative(() => {}, 'refresh')
+            };
+            try {
+              const Sym = win.Symbol || (typeof Symbol !== 'undefined' ? Symbol : null);
+              if (Sym && Sym.iterator) {
+                emptyList[Sym.iterator] = function () {
+                  return { next: () => ({ value: undefined, done: true }) };
+                };
+              }
+            } catch {}
+            for (const nt of navTargets) {
+              try {
+                SafeObject.defineProperty(nt, 'maxTouchPoints', { get: registerNative(() => 0, 'get maxTouchPoints'), configurable: true });
+              } catch {}
+              try {
+                SafeObject.defineProperty(nt, 'pdfViewerEnabled', { get: registerNative(() => false, 'get pdfViewerEnabled'), configurable: true });
+              } catch {}
+              try {
+                SafeObject.defineProperty(nt, 'plugins', { get: registerNative(() => emptyList, 'get plugins'), configurable: true });
+              } catch {}
+              try {
+                SafeObject.defineProperty(nt, 'mimeTypes', { get: registerNative(() => emptyList, 'get mimeTypes'), configurable: true });
+              } catch {}
+              for (const strippedNavProp of ['credentials', 'wakeLock', 'presentation', 'mediaCapabilities', 'devicePosture', 'ink', 'virtualKeyboard', 'scheduling', 'managed']) {
+                try {
+                  SafeObject.defineProperty(nt, strippedNavProp, { get: registerNative(() => undefined, 'get ' + strippedNavProp), configurable: true });
+                } catch {}
+              }
+            }
+            if (win.navigator) {
+              try {
+                win.navigator.sendBeacon = registerNative(() => false, 'sendBeacon');
+              } catch {}
+              if (win.navigator.permissions && win.navigator.permissions.query) {
+                try {
+                  win.navigator.permissions.query = registerNative(
+                    () => SafePromise.resolve({
+                      state: 'denied',
+                      onchange: null,
+                      addEventListener: registerNative(() => {}, 'addEventListener'),
+                      removeEventListener: registerNative(() => {}, 'removeEventListener'),
+                      dispatchEvent: registerNative(() => false, 'dispatchEvent')
+                    }),
+                    'query'
+                  );
+                } catch {}
+              }
+              if (win.navigator.storage && win.navigator.storage.estimate) {
+                try {
+                  win.navigator.storage.estimate = registerNative(
+                    () => SafePromise.resolve({ quota: 2147483648, usage: 0 }),
+                    'estimate'
+                  );
+                } catch {}
+              }
+              if (win.navigator.clipboard) {
+                try {
+                  win.navigator.clipboard.read = registerNative(() => SafePromise.reject(new win.Error('denied')), 'read');
+                  win.navigator.clipboard.readText = registerNative(() => SafePromise.reject(new win.Error('denied')), 'readText');
+                } catch {}
+              }
+            }
+            const strippedWinAPIs = [
+              'DeviceMotionEvent',
+              'DeviceOrientationEvent',
+              'DeviceMotionEventAcceleration',
+              'DeviceMotionEventRotationRate',
+              'Sensor',
+              'Accelerometer',
+              'Gyroscope',
+              'Magnetometer',
+              'LinearAccelerationSensor',
+              'AbsoluteOrientationSensor',
+              'RelativeOrientationSensor',
+              'AmbientLightSensor',
+              'NetworkInformation',
+              'BatteryManager'
+            ];
+            for (const apiName of strippedWinAPIs) {
+              if (apiName in win) {
+                try {
+                  SafeObject.defineProperty(win, apiName, { value: undefined, configurable: true });
+                } catch {}
+              }
+            }
+            if (win.History && win.History.prototype) {
+              try {
+                SafeObject.defineProperty(win.History.prototype, 'length', {
+                  get: registerNative(() => 1, 'get length'),
+                  configurable: true
+                });
+              } catch {}
+            }
+            try { win.name = ''; } catch {}
+            if (typeof win.queryLocalFonts === 'function') {
+              try {
+                win.queryLocalFonts = registerNative(
+                  () => SafePromise.reject(new SafeDOMException('Permission denied', 'SecurityError')),
+                  'queryLocalFonts'
+                );
+              } catch {}
+            }
+            if (win.document && win.document.fonts) {
+              try {
+                const SAFE_BASE_FONTS = new Set([
+                  'sans-serif', 'serif', 'monospace', 'cursive', 'fantasy', 'system-ui',
+                  'arial', 'courier new', 'georgia', 'times new roman', 'trebuchet ms', 'verdana', 'tahoma'
+                ]);
+                const fSet = win.document.fonts;
+                const safeCheck = registerNative(function check(fontSpec) {
+                  const fam = String(fontSpec || '').toLowerCase();
+                  for (const allowed of SAFE_BASE_FONTS) {
+                    if (fam.includes(allowed)) return true;
+                  }
+                  return false;
+                }, 'check');
+                if (win.FontFaceSet && win.FontFaceSet.prototype) {
+                  win.FontFaceSet.prototype.check = safeCheck;
+                  win.FontFaceSet.prototype.forEach = registerNative(() => {}, 'forEach');
+                  const Sym = win.Symbol || (typeof Symbol !== 'undefined' ? Symbol : null);
+                  if (Sym && Sym.iterator) {
+                    win.FontFaceSet.prototype[Sym.iterator] = function () {
+                      return { next: () => ({ value: undefined, done: true }) };
+                    };
+                  }
+                  SafeObject.defineProperty(win.FontFaceSet.prototype, 'size', {
+                    get: registerNative(() => 0, 'get size'),
+                    configurable: true
+                  });
+                } else {
+                  fSet.check = safeCheck;
+                }
+              } catch {}
+            }
+            if ('AudioWorklet' in win) {
+              try { SafeObject.defineProperty(win, 'AudioWorklet', { value: undefined, configurable: true }); } catch {}
+            }
+            if ('AudioWorkletNode' in win) {
+              try { SafeObject.defineProperty(win, 'AudioWorkletNode', { value: undefined, configurable: true }); } catch {}
+            }
+            if (typeof win.getScreenDetails === 'function') {
+              try {
+                win.getScreenDetails = registerNative(
+                  () => SafePromise.reject(new SafeDOMException('Permission denied', 'NotAllowedError')),
+                  'getScreenDetails'
+                );
+              } catch {}
+            }
+            for (const AudioCtx of [win.AudioContext, win.webkitAudioContext]) {
+              if (AudioCtx && AudioCtx.prototype) {
+                try {
+                  SafeObject.defineProperty(AudioCtx.prototype, 'baseLatency', { get: registerNative(() => 0, 'get baseLatency'), configurable: true });
+                  SafeObject.defineProperty(AudioCtx.prototype, 'outputLatency', { get: registerNative(() => 0, 'get outputLatency'), configurable: true });
+                } catch {}
+              }
+            }
+          } catch {}
+        }
+
+        // Safer ve Safest modlarinda WebAssembly (WASM) saldiri / zamanlama kanalini kapat
+        if ((secLevel === 'safer' || secLevel === 'safest') && typeof win.WebAssembly !== 'undefined') {
+          try {
+            SafeObject.defineProperty(win, 'WebAssembly', { value: undefined, configurable: true });
           } catch {}
         }
 
@@ -575,55 +818,157 @@ function buildMainWorldShieldScript(salt, secLevel, isTor = false, letterbox = f
               get: registerNative(() => 1, 'get devicePixelRatio'),
               configurable: true
             });
+            const stdOrient = SafeObject.freeze({
+              type: 'landscape-primary',
+              angle: 0,
+              onchange: null,
+              lock: registerNative(() => SafePromise.reject(new win.Error('denied')), 'lock'),
+              unlock: registerNative(() => {}, 'unlock'),
+              addEventListener: registerNative(() => {}, 'addEventListener'),
+              removeEventListener: registerNative(() => {}, 'removeEventListener')
+            });
+            for (const target of scrTargets) {
+              try {
+                SafeObject.defineProperty(target, 'orientation', {
+                  get: registerNative(() => stdOrient, 'get orientation'),
+                  configurable: true
+                });
+              } catch {}
+            }
           } catch {}
         }
 
         if (win.Worker) {
           try {
             const OrigWorker = win.Worker;
-            const workerPrelude = \`(function(){try{
+            const wasmDisable = secLevel === 'safer' || secLevel === 'safest';
+            const workerPrelude = \`(function zasW(){try{
               const s=\${strictMode ? 'true' : 'false'};
+              const noWasm=\${wasmDisable ? 'true' : 'false'};
               const ua=\${JSON.stringify(uniformUa)};
               const av=\${JSON.stringify(uniformAppVer)};
+              const vnd=\${JSON.stringify(uniformVendor)};
+              const psub=\${JSON.stringify(uniformProductSub)};
+              const idm=\${JSON.stringify(identityMode)};
+              const pbn=\${JSON.stringify(primaryBrandName)};
               const cm=\${JSON.stringify(chromeMajor)};
               const np=Object.getPrototypeOf(self.navigator);
               try{Object.defineProperty(np,'hardwareConcurrency',{get:()=>s?4:8,configurable:true})}catch{}
               try{Object.defineProperty(np,'deviceMemory',{get:()=>s?4:8,configurable:true})}catch{}
               try{Object.defineProperty(np,'userAgent',{get:()=>ua,configurable:true})}catch{}
               try{Object.defineProperty(np,'appVersion',{get:()=>av,configurable:true})}catch{}
-              try{Object.defineProperty(np,'vendor',{get:()=>'Google Inc.',configurable:true})}catch{}
-              try{
-                const wb=Object.freeze([Object.freeze({brand:'Chromium',version:cm}),Object.freeze({brand:'Not-A.Brand',version:'24'}),Object.freeze({brand:'Google Chrome',version:cm})]);
-                Object.defineProperty(np,'userAgentData',{get:()=>({brands:wb,mobile:false,platform:'Windows',getHighEntropyValues:()=>Promise.resolve({brands:wb,mobile:false,platform:'Windows',architecture:'x86',bitness:'64',platformVersion:'15.0.0'}),toJSON:()=>({brands:wb,mobile:false,platform:'Windows'})}),configurable:true});
-              }catch{}
+              try{Object.defineProperty(np,'vendor',{get:()=>vnd,configurable:true})}catch{}
+              try{Object.defineProperty(np,'productSub',{get:()=>psub,configurable:true})}catch{}
+              if(idm==='tor'){
+                try{Object.defineProperty(np,'oscpu',{get:()=>'Windows NT 10.0; Win64; x64',configurable:true})}catch{}
+                try{Object.defineProperty(np,'buildID',{get:()=>'20181001000000',configurable:true})}catch{}
+              }
+              if(s||idm==='tor'){
+                try{Object.defineProperty(np,'userAgentData',{get:()=>undefined,configurable:true})}catch{}
+              }
+              try{Object.defineProperty(np,'connection',{get:()=>undefined,configurable:true})}catch{}
+              try{Object.defineProperty(np,'bluetooth',{get:()=>undefined,configurable:true})}catch{}
+              try{Object.defineProperty(np,'usb',{get:()=>undefined,configurable:true})}catch{}
+              try{Object.defineProperty(np,'hid',{get:()=>undefined,configurable:true})}catch{}
+              try{Object.defineProperty(np,'serial',{get:()=>undefined,configurable:true})}catch{}
               if(s){
                 try{Object.defineProperty(np,'language',{get:()=>'en-US',configurable:true})}catch{}
                 try{Object.defineProperty(np,'languages',{get:()=>Object.freeze(['en-US','en']),configurable:true})}catch{}
                 try{Object.defineProperty(np,'platform',{get:()=>'Win32',configurable:true})}catch{}
-                try{Object.defineProperty(np,'connection',{get:()=>undefined,configurable:true})}catch{}
-                try{Date.prototype.getTimezoneOffset=()=>0}catch{}
+                try{Object.defineProperty(np,'gpu',{get:()=>undefined,configurable:true})}catch{}
+                try{if(np.storage||self.navigator.storage){self.navigator.storage.estimate=()=>Promise.resolve({quota:2147483648,usage:0});}}catch{}
+                try{
+                  const WD=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+                  const WM=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                  const p2=n=>n<10?'0'+n:String(n);
+                  const uds=d=>WD[d.getUTCDay()]+' '+WM[d.getUTCMonth()]+' '+p2(d.getUTCDate())+' '+d.getUTCFullYear();
+                  const uts=d=>p2(d.getUTCHours())+':'+p2(d.getUTCMinutes())+':'+p2(d.getUTCSeconds())+' GMT+0000 (Coordinated Universal Time)';
+                  Date.prototype.getTimezoneOffset=()=>0;
+                  Date.prototype.toDateString=function(){return isNaN(this.getTime())?'Invalid Date':uds(this);};
+                  Date.prototype.toTimeString=function(){return isNaN(this.getTime())?'Invalid Date':uts(this);};
+                  Date.prototype.toString=function(){return isNaN(this.getTime())?'Invalid Date':uds(this)+' '+uts(this);};
+                }catch{}
                 try{
                   const OD=Intl.DateTimeFormat;
                   Intl.DateTimeFormat=function(l,o){const opt=o?{...o}:{};if(!opt.timeZone)opt.timeZone='UTC';return new OD(l||'en-US',opt);};
                   Intl.DateTimeFormat.prototype=OD.prototype;
                 }catch{}
+              }else if(idm!=='tor'){
+                try{
+                  const wb=Object.freeze([Object.freeze({brand:'Chromium',version:cm}),Object.freeze({brand:'Not-A.Brand',version:'24'}),Object.freeze({brand:pbn,version:idm==='zaslon'?'1':cm})]);
+                  Object.defineProperty(np,'userAgentData',{get:()=>({brands:wb,mobile:false,platform:'Windows',getHighEntropyValues:()=>Promise.resolve({brands:wb,mobile:false,platform:'Windows',architecture:'x86',bitness:'64',platformVersion:'15.0.0'}),toJSON:()=>({brands:wb,mobile:false,platform:'Windows'})}),configurable:true});
+                }catch{}
               }
+              if(self.OffscreenCanvasRenderingContext2D&&OffscreenCanvasRenderingContext2D.prototype&&OffscreenCanvasRenderingContext2D.prototype.getImageData){
+                try{
+                  const oGI=OffscreenCanvasRenderingContext2D.prototype.getImageData;
+                  OffscreenCanvasRenderingContext2D.prototype.getImageData=function(sx,sy,sw,sh){
+                    const img=oGI.call(this,sx,sy,sw,sh);
+                    const d=img&&img.data;
+                    if(d&&d.length>=16){const step=Math.max(16,Math.floor(d.length/64)&~3);for(let i=0,k=0;i<d.length;i+=step,k++){d[i]=Math.max(0,Math.min(255,d[i]+(((k^7)%3)-1)));}}
+                    return img;
+                  };
+                }catch{}
+              }
+              if(noWasm){try{Object.defineProperty(self,'WebAssembly',{value:undefined,configurable:true})}catch{}}
               if(self.Performance&&Performance.prototype&&Performance.prototype.now){
                 const on=Performance.prototype.now;
                 Performance.prototype.now=function(){const v=on.call(this);return s?Math.floor(v/2)*2:Math.floor(v*10)/10;};
               }
+              if(self.Worker){
+                try{
+                  const OW=self.Worker;
+                  const hdr='('+zasW.toString()+')(); ';
+                  const WW=function Worker(u,o){
+                    try{
+                      if(typeof u==='string'&&!u.startsWith('blob:')){
+                        const abs=new URL(u,self.location?self.location.href:undefined).href;
+                        const code=(o&&o.type==='module')?(hdr+'import('+JSON.stringify(abs)+');'):(hdr+'importScripts('+JSON.stringify(abs)+');');
+                        return new OW(URL.createObjectURL(new Blob([code],{type:'application/javascript'})),o);
+                      }
+                    }catch{}
+                    return new OW(u,o);
+                  };
+                  WW.prototype=OW.prototype;
+                  self.Worker=WW;
+                }catch{}
+              }
             }catch{}})();\n\`;
 
+            const decodeDataJs = (dUrl) => {
+              const comma = dUrl.indexOf(',');
+              if (comma < 0) return null;
+              const meta = dUrl.slice(5, comma).toLowerCase();
+              const body = dUrl.slice(comma + 1);
+              if (!/javascript|ecmascript|^;charset=|^$/.test(meta) && meta.includes('/') && !meta.includes('script')) {
+                return null;
+              }
+              if (meta.includes(';base64')) {
+                if (typeof atob !== 'function') return null;
+                return atob(body);
+              }
+              return decodeURIComponent(body);
+            };
+
             const WrappedWorker = registerNative(function Worker(scriptURL, opts) {
-              if ((!opts || opts.type !== 'module') && typeof scriptURL === 'string' && !scriptURL.startsWith('data:')) {
+              if (typeof scriptURL === 'string') {
+                const isModule = !!(opts && opts.type === 'module');
                 try {
-                  const baseHref = (typeof location !== 'undefined' && location && location.href) ? location.href : undefined;
-                  const absUrl = new URL(scriptURL, baseHref).href;
-                  const shimBlob = new SafeBlob([workerPrelude + 'importScripts(' + JSON.stringify(absUrl) + ');'], {
-                    type: 'application/javascript'
-                  });
-                  const blobUrl = SafeURL.createObjectURL(shimBlob);
-                  return new OrigWorker(blobUrl, opts);
+                  if (scriptURL.startsWith('data:')) {
+                    const decoded = decodeDataJs(scriptURL);
+                    if (typeof decoded === 'string') {
+                      const shimBlob = new SafeBlob([workerPrelude + decoded], { type: 'application/javascript' });
+                      return new OrigWorker(SafeURL.createObjectURL(shimBlob), opts);
+                    }
+                  } else {
+                    const baseHref = (typeof location !== 'undefined' && location && location.href) ? location.href : undefined;
+                    const absUrl = new URL(scriptURL, baseHref).href;
+                    const loader = isModule
+                      ? (workerPrelude + 'import(' + JSON.stringify(absUrl) + ').catch(function(e){setTimeout(function(){throw e;},0);});')
+                      : (workerPrelude + 'importScripts(' + JSON.stringify(absUrl) + ');');
+                    const shimBlob = new SafeBlob([loader], { type: 'application/javascript' });
+                    return new OrigWorker(SafeURL.createObjectURL(shimBlob), opts);
+                  }
                 } catch {}
               }
               return new OrigWorker(scriptURL, opts);
@@ -676,24 +1021,70 @@ function buildMainWorldShieldScript(salt, secLevel, isTor = false, letterbox = f
             }
           }
 
-          /* 4. Font Ölçümü (measureText) Parmak İzi Kalkanı */
+          /* 4. Font Ölçümü (measureText & DOMRect) Parmak İzi Kalkanı */
+          const maskTextMetrics = (metrics, jitterDelta) => {
+            try {
+              const origWidth = metrics.width;
+              if (origWidth === 0) return metrics;
+              SafeObject.defineProperty(metrics, 'width', {
+                get: registerNative(() => origWidth + jitterDelta, 'get width'),
+                configurable: true
+              });
+              const boxProps = [
+                'actualBoundingBoxLeft',
+                'actualBoundingBoxRight',
+                'fontBoundingBoxAscent',
+                'fontBoundingBoxDescent',
+                'actualBoundingBoxAscent',
+                'actualBoundingBoxDescent',
+                'emHeightAscent',
+                'emHeightDescent'
+              ];
+              for (let i = 0; i < boxProps.length; i++) {
+                const bp = boxProps[i];
+                const rawVal = metrics[bp];
+                if (typeof rawVal === 'number') {
+                  const adj = strictMode ? Math.round(rawVal * 2) / 2 : rawVal + jitterDelta;
+                  SafeObject.defineProperty(metrics, bp, {
+                    get: registerNative(() => adj, 'get ' + bp),
+                    configurable: true
+                  });
+                }
+              }
+            } catch {}
+            return metrics;
+          };
+
           if (win.CanvasRenderingContext2D.prototype.measureText) {
             const origMeasureText = win.CanvasRenderingContext2D.prototype.measureText;
             const jitterDelta = ((seed & 0xff) - 128) * 0.00015;
             win.CanvasRenderingContext2D.prototype.measureText = registerNative(function measureText(text) {
               const metrics = origMeasureText.call(this, text);
-              try {
-                const origWidth = metrics.width;
-                if (!text || String(text).length === 0 || origWidth === 0) {
-                  return metrics;
-                }
-                SafeObject.defineProperty(metrics, 'width', {
-                  get: registerNative(() => origWidth + jitterDelta, 'get width'),
-                  configurable: true
-                });
-              } catch {}
-              return metrics;
+              if (!text || String(text).length === 0) return metrics;
+              return maskTextMetrics(metrics, jitterDelta);
             }, 'measureText');
+          }
+        }
+
+        if (strictMode) {
+          const quantizeRect = (r) => {
+            if (!r || typeof r !== 'object') return r;
+            const q = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v * 2) / 2 : v);
+            const left = q(r.left), top = q(r.top), width = q(r.width), height = q(r.height);
+            const right = q(r.right), bottom = q(r.bottom);
+            return { x: left, y: top, width, height, top, right, bottom, left, toJSON() { return { x: left, y: top, width, height, top, right, bottom, left }; } };
+          };
+          if (win.Element && win.Element.prototype && win.Element.prototype.getBoundingClientRect) {
+            const origElRect = win.Element.prototype.getBoundingClientRect;
+            win.Element.prototype.getBoundingClientRect = registerNative(function getBoundingClientRect() {
+              return quantizeRect(origElRect.call(this));
+            }, 'getBoundingClientRect');
+          }
+          if (win.Range && win.Range.prototype && win.Range.prototype.getBoundingClientRect) {
+            const origRangeRect = win.Range.prototype.getBoundingClientRect;
+            win.Range.prototype.getBoundingClientRect = registerNative(function getBoundingClientRect() {
+              return quantizeRect(origRangeRect.call(this));
+            }, 'getBoundingClientRect');
           }
         }
 
@@ -744,7 +1135,7 @@ function buildMainWorldShieldScript(salt, secLevel, isTor = false, letterbox = f
           }, 'convertToBlob');
         }
 
-        /* 5. WebGL Parmak İzi Kalkanı (Ekran Kartı Modelini Tek Tip Windows D3D11 Havuzuna Maskeleme + readPixels Gürültüsü) */
+        /* 5. WebGL Parmak İzi Kalkanı (Ekran Kartı Modelini + Donanım Limitlerini Maskeleme + readPixels) */
         const maskWebGL = (proto) => {
           if (!proto || !proto.getParameter) return;
           const origGetParam = proto.getParameter;
@@ -756,14 +1147,68 @@ function buildMainWorldShieldScript(salt, secLevel, isTor = false, letterbox = f
           ];
           const vPick = strictMode ? vendors[0] : vendors[seed % vendors.length];
           const rPick = strictMode ? renderers[0] : renderers[seed % renderers.length];
+          const stdCaps = {
+            3379: 16384,  // MAX_TEXTURE_SIZE
+            34024: 16384, // MAX_RENDERBUFFER_SIZE
+            34076: 16384, // MAX_CUBE_MAP_TEXTURE_SIZE
+            34921: 16,    // MAX_VERTEX_ATTRIBS
+            34930: 16,    // MAX_TEXTURE_IMAGE_UNITS
+            35660: 16,    // MAX_VERTEX_TEXTURE_IMAGE_UNITS
+            35661: 32,    // MAX_COMBINED_TEXTURE_IMAGE_UNITS
+            36347: 4096,  // MAX_VERTEX_UNIFORM_VECTORS
+            36348: 30,    // MAX_VARYING_VECTORS
+            36349: 1024   // MAX_FRAGMENT_UNIFORM_VECTORS
+          };
 
           proto.getParameter = registerNative(function getParameter(param) {
             if (param === 7936) return 'WebKit'; // GL_VENDOR
             if (param === 7937) return 'WebKit WebGL'; // GL_RENDERER
             if (param === 37445) return vPick; // UNMASKED_VENDOR_WEBGL
             if (param === 37446) return rPick; // UNMASKED_RENDERER_WEBGL
+            if (strictMode) {
+              if (param in stdCaps) return stdCaps[param];
+              if (param === 3386 && typeof win.Int32Array === 'function') return new win.Int32Array([16384, 16384]);
+              if (param === 33901 && typeof win.Float32Array === 'function') return new win.Float32Array([1, 1024]);
+              if (param === 33902 && typeof win.Float32Array === 'function') return new win.Float32Array([1, 1]);
+            }
             return origGetParam.call(this, param);
           }, 'getParameter');
+
+          if (strictMode && typeof proto.getExtension === 'function') {
+            const origGetExt = proto.getExtension;
+            proto.getExtension = registerNative(function getExtension(name) {
+              if (String(name || '').toLowerCase() === 'webgl_debug_renderer_info') {
+                return null;
+              }
+              return origGetExt.call(this, name);
+            }, 'getExtension');
+          }
+
+          if (strictMode && typeof proto.getSupportedExtensions === 'function') {
+            const stdExts = [
+              'ANGLE_instanced_arrays', 'EXT_blend_minmax', 'EXT_color_buffer_half_float',
+              'EXT_sRGB', 'OES_element_index_uint', 'OES_standard_derivatives',
+              'OES_texture_float', 'OES_texture_half_float', 'OES_vertex_array_object',
+              'WEBGL_color_buffer_float', 'WEBGL_compressed_texture_s3tc', 'WEBGL_depth_texture',
+              'WEBGL_lose_context'
+            ];
+            proto.getSupportedExtensions = registerNative(function getSupportedExtensions() {
+              return stdExts.slice();
+            }, 'getSupportedExtensions');
+          }
+
+          if (strictMode && typeof proto.getShaderPrecisionFormat === 'function') {
+            const origSpf = proto.getShaderPrecisionFormat;
+            proto.getShaderPrecisionFormat = registerNative(function getShaderPrecisionFormat(shaderType, precisionType) {
+              const res = origSpf.call(this, shaderType, precisionType);
+              if (!res) return res;
+              // HIGH_FLOAT=36338, MEDIUM_FLOAT=36337, LOW_FLOAT=36336
+              if (precisionType === 36338 || precisionType === 36337 || precisionType === 36336) {
+                return { rangeMin: 127, rangeMax: 127, precision: 23 };
+              }
+              return { rangeMin: 31, rangeMax: 30, precision: 0 };
+            }, 'getShaderPrecisionFormat');
+          }
 
           if (typeof proto.readPixels === 'function') {
             const origReadPixels = proto.readPixels;
@@ -784,6 +1229,28 @@ function buildMainWorldShieldScript(salt, secLevel, isTor = false, letterbox = f
         };
         if (win.WebGLRenderingContext) maskWebGL(win.WebGLRenderingContext.prototype);
         if (win.WebGL2RenderingContext) maskWebGL(win.WebGL2RenderingContext.prototype);
+
+        if (strictMode) {
+          for (const ctxName of ['AudioContext', 'webkitAudioContext', 'OfflineAudioContext', 'BaseAudioContext']) {
+            const Ctor = win[ctxName];
+            if (Ctor && Ctor.prototype) {
+              try {
+                SafeObject.defineProperty(Ctor.prototype, 'sampleRate', {
+                  get: registerNative(() => 44100, 'get sampleRate'),
+                  configurable: true
+                });
+              } catch {}
+            }
+          }
+          if (win.AudioDestinationNode && win.AudioDestinationNode.prototype) {
+            try {
+              SafeObject.defineProperty(win.AudioDestinationNode.prototype, 'maxChannelCount', {
+                get: registerNative(() => 2, 'get maxChannelCount'),
+                configurable: true
+              });
+            } catch {}
+          }
+        }
 
         /* 6. AudioContext & AnalyserNode Ses Parmak İzi Kalkanı (WeakSet ile sıfır özellik sızıntısı) */
         if (win.AudioBuffer && win.AudioBuffer.prototype && win.AudioBuffer.prototype.getChannelData) {
@@ -970,6 +1437,40 @@ function buildMainWorldShieldScript(salt, secLevel, isTor = false, letterbox = f
               }, methodName);
             }
           }
+          if (typeof win.Element.prototype.insertAdjacentHTML === 'function') {
+            const origIah = win.Element.prototype.insertAdjacentHTML;
+            win.Element.prototype.insertAdjacentHTML = registerNative(function insertAdjacentHTML(pos, html) {
+              const res = origIah.call(this, pos, html);
+              try {
+                const scope = (this && this.parentElement) ? this.parentElement : this;
+                const frames = scope && scope.querySelectorAll ? scope.querySelectorAll('iframe') : [];
+                for (let i = 0; i < frames.length; i++) {
+                  if (frames[i].contentWindow) patchWindowContext(frames[i].contentWindow);
+                }
+              } catch {}
+              return res;
+            }, 'insertAdjacentHTML');
+          }
+          try {
+            const ihDesc = SafeObject.getOwnPropertyDescriptor(win.Element.prototype, 'innerHTML');
+            if (ihDesc && typeof ihDesc.set === 'function') {
+              const origIhSet = ihDesc.set;
+              SafeObject.defineProperty(win.Element.prototype, 'innerHTML', {
+                configurable: true,
+                enumerable: ihDesc.enumerable,
+                get: ihDesc.get,
+                set: registerNative(function innerHTML(v) {
+                  origIhSet.call(this, v);
+                  try {
+                    const frames = this && this.querySelectorAll ? this.querySelectorAll('iframe') : [];
+                    for (let i = 0; i < frames.length; i++) {
+                      if (frames[i].contentWindow) patchWindowContext(frames[i].contentWindow);
+                    }
+                  } catch {}
+                }, 'set innerHTML')
+              });
+            }
+          } catch {}
         }
         if (win.Document && win.Document.prototype && win.Document.prototype.write) {
           const origDocWrite = win.Document.prototype.write;
@@ -1013,26 +1514,48 @@ function buildYouTubeAdblockMainWorldScript() {
         return obj;
       };
 
-      // 1) ytInitialPlayerResponse yakalayıcı (yalnızca youtube.com)
+      // 1) ytInitialPlayerResponse yakalayıcı (yalnızca youtube.com, [native code] korumalı)
+      const ytNativeMap = new WeakMap();
+      const maskNative = (fn, label) => {
+        try {
+          Object.defineProperty(fn, 'name', { value: label, configurable: true });
+          ytNativeMap.set(fn, 'function ' + label + '() { [native code] }');
+        } catch {}
+        return fn;
+      };
+      try {
+        const curToString = Function.prototype.toString;
+        const wrappedToStr = function toString() {
+          if (typeof this === 'function' && ytNativeMap.has(this)) return ytNativeMap.get(this);
+          return curToString.call(this);
+        };
+        maskNative(wrappedToStr, 'toString');
+        Object.defineProperty(Function.prototype, 'toString', {
+          value: wrappedToStr,
+          configurable: true,
+          writable: true
+        });
+      } catch {}
+
       let _ytInitialPlayerResponse = window.ytInitialPlayerResponse;
       if (_ytInitialPlayerResponse) stripYtAdFields(_ytInitialPlayerResponse);
       try {
         Object.defineProperty(window, 'ytInitialPlayerResponse', {
           configurable: true,
-          get() { return _ytInitialPlayerResponse; },
-          set(val) { _ytInitialPlayerResponse = stripYtAdFields(val); }
+          get: maskNative(function () { return _ytInitialPlayerResponse; }, 'get ytInitialPlayerResponse'),
+          set: maskNative(function (val) { _ytInitialPlayerResponse = stripYtAdFields(val); }, 'set ytInitialPlayerResponse')
         });
       } catch {}
 
       // 2) Response.prototype.json sarmalayıcı (/youtubei/v1/player ve /youtubei/v1/next yanıtlarındaki reklam dizilerini temizler)
       const origJson = Response.prototype.json;
-      const wrappedJson = async function json(...a) {
+      const wrappedJson = maskNative(async function json(...a) {
         const data = await origJson.apply(this, a);
         try {
           stripYtAdFields(data);
         } catch {}
         return data;
-      };
+      }, 'json');
       Response.prototype.json = wrappedJson;
     } catch {}
   })();`;
@@ -1040,7 +1563,7 @@ function buildYouTubeAdblockMainWorldScript() {
 
 if (fpEnabled || isTorTab) {
   try {
-    webFrame.executeJavaScript(buildMainWorldShieldScript(sessionSalt, securityLevel, isTorTab, letterboxEnabled, chromeMajor));
+    webFrame.executeJavaScript(buildMainWorldShieldScript(sessionSalt, securityLevel, isTorTab, letterboxEnabled, chromeMajor, identityMode));
   } catch {}
 }
 if (adblockEnabled) {
@@ -1126,6 +1649,8 @@ const opaqueTag = (() => {
 })();
 
 const clickedButtons = new WeakSet();
+const injectedShadowRoots = new WeakSet();
+const hiddenConsentBoxes = new WeakSet();
 const hookedVideos = new WeakSet();
 const attachedHudVideos = new WeakSet();
 const reportedVideoKeys = new WeakMap();
@@ -1351,12 +1876,11 @@ function cleanCookiePopupsAndEnablePiP() {
       if (root !== document && root.host) {
         try {
           const hostSig = `${root.host.id || ''} ${typeof root.host.className === 'string' ? root.host.className : ''} ${root.host.tagName || ''}`.toLowerCase();
-          const hasShadowStyle = Boolean(root.querySelector?.('style[data-zaslon-cookie-shield]'));
-          if (!hasShadowStyle && /(cookie|çerez|cerez|consent|cmp|gdpr|usercentrics|cky|didomi|onetrust|fc-|sp_)/i.test(hostSig)) {
+          if (!injectedShadowRoots.has(root) && /(cookie|çerez|cerez|consent|cmp|gdpr|usercentrics|cky|didomi|onetrust|fc-|sp_)/i.test(hostSig)) {
             const st = document.createElement('style');
-            st.setAttribute('data-zaslon-cookie-shield', '1');
             st.textContent = COOKIE_POPUP_HIDE_CSS;
             root.appendChild(st);
+            injectedShadowRoots.add(root);
             hasDismissedConsentOnPage = true;
           }
         } catch {}
@@ -1405,7 +1929,7 @@ function cleanCookiePopupsAndEnablePiP() {
               box.style.setProperty('display', 'none', 'important');
               box.style.setProperty('visibility', 'hidden', 'important');
               box.style.setProperty('pointer-events', 'none', 'important');
-              if (box.dataset) box.dataset.zaslonConsentHidden = '1';
+              hiddenConsentBoxes.add(box);
               hasDismissedConsentOnPage = true;
             }
           }
@@ -2296,6 +2820,7 @@ ipcRenderer.on('zaslon-page-config', (_e, cfg) => {
     refreshSponsorBlockForPage();
   }
   if (typeof cfg.securityLevel === 'string') securityLevel = cfg.securityLevel;
+  if (typeof cfg.identityMode === 'string') identityMode = cfg.identityMode;
   if (typeof cfg.lang === 'string' && PAGE_I18N[cfg.lang]) currentLang = cfg.lang;
   applyIncomingRgxConfig(cfg, false);
 });

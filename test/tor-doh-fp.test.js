@@ -874,3 +874,427 @@ test('page-preload.js dismisses long Turkish consent buttons, hides CMP overlays
     delete require.cache[require.resolve(preloadPath)];
   }
 });
+
+test('page-preload.js strictMode eliminates device-tracking surfaces (plugins, touchPoints, history, sensors, sendBeacon, storage, permissions, orientation)', async () => {
+  const preloadSrc = fs.readFileSync(path.join(__dirname, '..', 'page-preload.js'), 'utf8');
+  const start = preloadSrc.indexOf('function buildMainWorldShieldScript(');
+  const end = preloadSrc.indexOf('function buildYouTubeAdblockMainWorldScript(');
+  assert.ok(start !== -1 && end > start);
+  const buildFn = new Function(`${preloadSrc.slice(start, end)}\nreturn buildMainWorldShieldScript;`)();
+  const script = buildFn('salt-onion-strict', 'safest', true, true, '144');
+
+  function NavCtor() {}
+  Object.defineProperties(NavCtor.prototype, {
+    maxTouchPoints: { get: () => 10, configurable: true },
+    pdfViewerEnabled: { get: () => true, configurable: true },
+    plugins: { get: () => [{ name: 'Chrome PDF' }], configurable: true },
+    mimeTypes: { get: () => [{ type: 'application/pdf' }], configurable: true }
+  });
+  const nav = new NavCtor();
+  nav.sendBeacon = () => true;
+  nav.permissions = { query: async () => ({ state: 'granted' }) };
+  nav.storage = { estimate: async () => ({ quota: 999999999999, usage: 12345678 }) };
+  nav.clipboard = { read: async () => [], readText: async () => 'secret' };
+
+  function HistCtor() {}
+  Object.defineProperty(HistCtor.prototype, 'length', { get: () => 42, configurable: true });
+  function ScrCtor() {}
+
+  const sandbox = {
+    Object,
+    Array,
+    String,
+    Number,
+    Boolean,
+    Symbol,
+    Math,
+    JSON,
+    Map,
+    Set,
+    WeakMap,
+    WeakSet,
+    Promise,
+    Date,
+    Error,
+    RegExp,
+    URL,
+    Blob,
+    DOMException: class DOMException extends Error {},
+    location: { hostname: 'privacycheck.onion', href: 'http://privacycheck.onion/' },
+    name: 'cross-site-tracker-token',
+    Navigator: NavCtor,
+    navigator: nav,
+    History: HistCtor,
+    history: new HistCtor(),
+    Screen: ScrCtor,
+    screen: new ScrCtor(),
+    innerWidth: 1200,
+    innerHeight: 800,
+    DeviceMotionEvent: function DeviceMotionEvent() {},
+    DeviceOrientationEvent: function DeviceOrientationEvent() {},
+    Sensor: function Sensor() {},
+    NetworkInformation: function NetworkInformation() {}
+  };
+  sandbox.window = sandbox;
+  sandbox.self = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(script, sandbox);
+
+  assert.equal(sandbox.navigator.maxTouchPoints, 0);
+  assert.equal(sandbox.navigator.pdfViewerEnabled, false);
+  assert.equal(sandbox.navigator.plugins.length, 0);
+  assert.equal(sandbox.navigator.mimeTypes.length, 0);
+  assert.equal(sandbox.navigator.sendBeacon('https://tracker.invalid/b', 'x'), false);
+  assert.equal(sandbox.history.length, 1);
+  assert.equal(sandbox.name, '');
+  assert.equal(sandbox.DeviceMotionEvent, undefined);
+  assert.equal(sandbox.DeviceOrientationEvent, undefined);
+  assert.equal(sandbox.Sensor, undefined);
+  assert.equal(sandbox.screen.orientation.type, 'landscape-primary');
+  assert.equal(sandbox.screen.orientation.angle, 0);
+
+  const est = await sandbox.navigator.storage.estimate();
+  assert.equal(est.quota, 2147483648);
+  assert.equal(est.usage, 0);
+  const perm = await sandbox.navigator.permissions.query({ name: 'geolocation' });
+  assert.equal(perm.state, 'denied');
+  await assert.rejects(() => sandbox.navigator.clipboard.readText(), /denied/);
+});
+
+test('Onion full-shield mode in ui.html forcefully enables DPI, DoH strict, Tor, safest & all layers; resolves .onion queries and uses 45s Tor SOCKS timeout', async () => {
+  const uiSrc = fs.readFileSync(path.join(__dirname, '..', 'ui.html'), 'utf8');
+  const torSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'network', 'tor-manager.js'), 'utf8');
+  const abSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'privacy', 'adblock-engine.js'), 'utf8');
+  const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+
+  // 1) .onion SOCKS5 timeout + paranoid whitelist bypass + permission check handler
+  assert.ok(torSrc.includes("endsWith('.onion')"));
+  assert.ok(torSrc.includes('45000 : 20000'));
+  assert.ok(abSrc.includes("securityLevel === 'safest' ? false : this.isSiteWhitelisted"));
+  assert.ok(mainSrc.includes('ses.setPermissionCheckHandler?.'));
+
+  // 2) .onion URL resolution with query/hash
+  const sanitizeMatch = uiSrc.match(/const sanitize=u=>[^\n]+/);
+  const ddgNormMatch = uiSrc.match(/function normalizeDdgForSafest\(u\)\{[\s\S]*?\n\}/);
+  const resolveMatch = uiSrc.match(/function resolve\(input\)\{[\s\S]*?\n\}/);
+  assert.ok(ddgNormMatch, 'normalizeDdgForSafest() should exist in ui.html');
+  assert.ok(resolveMatch, 'resolve() should exist in ui.html');
+  const resolveFn = new Function(`
+    const ENGINES = { 'Zaslon Meta': 'https://search.example/?q=' };
+    const BANGS = {};
+    const S = { set: { engine: 'Zaslon Meta' }, priv: { securityLevel: 'standard' } };
+    const sanitize = u => u;
+    ${ddgNormMatch[0]}
+    ${resolveMatch[0]}
+    return resolve;
+  `)();
+  assert.equal(resolveFn('duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion'), 'http://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion');
+  assert.equal(resolveFn('duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion?q=privacy'), 'http://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion?q=privacy');
+
+  // 3) 3-dots menu Onion Mode button and activateOnionFullSecurityMode execution
+  assert.ok(uiSrc.includes("t('menu.onionMode')"));
+  const keysMatch = uiSrc.match(/const ONION_SNAPSHOT_PRIV_KEYS=[\s\S]*?const ONION_RESTORE_DEFAULTS=[\s\S]*?\};/);
+  const activeHelperMatch = uiSrc.match(/function isOnionFullSecurityActive\(\)\{[\s\S]*?\n\}/);
+  const activateMatch = uiSrc.match(/async function activateOnionFullSecurityMode\(\)\{[\s\S]*?\n\}/);
+  assert.ok(keysMatch && activeHelperMatch && activateMatch);
+
+  const savedCalls = [];
+  const dpiCalls = [];
+  const dohCalls = [];
+  let startTorCalls = 0;
+  const navigated = [];
+  const fakeView = { classList: { contains: () => true, remove: () => {} } };
+  const activeTab = { id: 1, container: 'Kişisel', url: 'https://example.com', view: fakeView };
+  const S = {
+    priv: {
+      dpi: false,
+      dohEnabled: false,
+      dohStrict: false,
+      adblock: false,
+      tele: false,
+      fp: false,
+      popups: false,
+      block3pCookies: false,
+      letterbox: false,
+      clearTabOnClose: false,
+      clearOnExit: false,
+      clearTorDataOnExit: false,
+      userscriptsEnabled: true,
+      securityLevel: 'standard',
+      metaSearchRequireTor: false,
+      metaSearchRouting: 'auto',
+      trRouting: 'tab',
+      whitelist: ['example.com']
+    },
+    container: 'Kişisel',
+    tabs: [activeTab],
+    netStatus: { tor: { state: 'stopped' } },
+    inspector: { siteWhitelisted: true }
+  };
+
+  const activateFn = new Function(
+    'S', 'Z', 'cur', 'host', 'normCont', 'save', 'navigate', 'newTab',
+    'updateShieldBadge', 'updateNetworkBadges', 'refreshInspectorForActive', 'renderPanel', 'toast', 't',
+    `let panel = '';\n${keysMatch[0]}\n${activeHelperMatch[0]}\n${activateMatch[0]}\nreturn activateOnionFullSecurityMode;`
+  )(
+    S,
+    {
+      toggleDpi: async opts => { dpiCalls.push(opts); return { enabled: true }; },
+      configureDoh: async opts => { dohCalls.push(opts); return { enabled: true, strictMode: true }; },
+      toggleSiteShield: async () => false,
+      startTor: async () => { startTorCalls++; return { state: 'starting', bootstrapPct: 10 }; },
+      close: () => {}
+    },
+    () => activeTab,
+    u => new URL(u).hostname,
+    c => c,
+    (k, v) => savedCalls.push([k, { ...v }]),
+    (tb, url, push) => navigated.push({ id: tb.id, container: tb.container, url, push }),
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    k => k
+  );
+
+  await activateFn();
+
+  assert.equal(S.priv.dpi, true);
+  assert.equal(S.priv.dpiSplitProfile, 'aggr-frag');
+  assert.equal(S.priv.dohEnabled, true);
+  assert.equal(S.priv.dohStrict, true);
+  assert.equal(S.priv.adblock, true);
+  assert.equal(S.priv.tele, true);
+  assert.equal(S.priv.fp, true);
+  assert.equal(S.priv.popups, true);
+  assert.equal(S.priv.block3pCookies, true);
+  assert.equal(S.priv.letterbox, true);
+  assert.equal(S.priv.clearTabOnClose, true);
+  assert.equal(S.priv.clearOnExit, true);
+  assert.equal(S.priv.clearTorDataOnExit, true);
+  assert.equal(S.priv.userscriptsEnabled, false);
+  assert.equal(S.priv.securityLevel, 'safest');
+  assert.equal(S.priv.metaSearchRequireTor, true);
+  assert.equal(S.priv.metaSearchRouting, 'tor');
+  assert.equal(S.priv.trRouting, 'tor');
+  assert.deepEqual(S.priv.whitelist, []);
+  assert.equal(S.container, '🧅 Tor Zırhlı');
+  assert.equal(dpiCalls.length, 1);
+  assert.equal(dohCalls.length, 1);
+  assert.equal(startTorCalls, 1);
+  assert.equal(savedCalls.length, 1);
+  assert.deepEqual(navigated[0], {
+    id: 1,
+    container: '🧅 Tor Zırhlı',
+    url: 'https://example.com',
+    push: false
+  });
+});
+
+test('Identity toggle switches cleanly between Tor Browser and Zaslon Browser profiles across hardening, main, preload, and UI', async () => {
+  const vm = require('node:vm');
+  const {
+    getIdentityProfile,
+    normalizeIdentityMode,
+    TOR_BROWSER_ESR_MAJOR
+  } = require('../src/privacy/chromium-hardening');
+
+  assert.equal(normalizeIdentityMode('tor'), 'tor');
+  assert.equal(normalizeIdentityMode('zaslon'), 'zaslon');
+  assert.equal(normalizeIdentityMode('unknown'), 'tor');
+
+  const torProf = getIdentityProfile('tor', '144', '1.0.0');
+  assert.equal(torProf.ua, `Mozilla/5.0 (Windows NT 10.0; rv:${TOR_BROWSER_ESR_MAJOR}.0) Gecko/20100101 Firefox/${TOR_BROWSER_ESR_MAJOR}.0`);
+  assert.equal(torProf.appVersion, '5.0 (Windows)');
+  assert.equal(torProf.vendor, '');
+  assert.equal(torProf.hideUserAgentData, true);
+  assert.equal(torProf.hideWindowChrome, true);
+
+  const zasProf = getIdentityProfile('zaslon', '144', '1.0.0');
+  assert.ok(zasProf.ua.includes('Chrome/144.0.0.0'));
+  assert.ok(zasProf.ua.endsWith('Zaslon/1.0.0'));
+  assert.equal(zasProf.vendor, 'Google Inc.');
+  assert.equal(zasProf.hideUserAgentData, false);
+
+  const preloadSrc = fs.readFileSync(path.join(__dirname, '..', 'page-preload.js'), 'utf8');
+  const helpersMatch = preloadSrc.match(/function buildMainWorldShieldScript[\s\S]*?^function buildYouTubeAdblockMainWorldScript/m);
+  assert.ok(helpersMatch);
+  const fnSource = helpersMatch[0].replace(/\s*function buildYouTubeAdblockMainWorldScript$/, '');
+  const buildMain = vm.runInNewContext(`(() => { ${fnSource}\nreturn buildMainWorldShieldScript; })()`);
+
+  function runIdentitySandbox(secLevel, isTor, idMode) {
+    function NavCtor() {}
+    const nav = Object.create(NavCtor.prototype);
+    const sb = {
+      Navigator: NavCtor,
+      navigator: nav,
+      chrome: { runtime: {} },
+      location: { hostname: 'whoami.example', href: 'https://whoami.example/' },
+      Object,
+      Promise,
+      DOMException,
+      Date,
+      Intl,
+      Blob,
+      URL,
+      WeakSet,
+      WeakMap,
+      Math
+    };
+    sb.window = sb;
+    vm.createContext(sb);
+    vm.runInContext(buildMain('salt-id', secLevel, isTor, false, '144', idMode, '1.0.0'), sb);
+    return sb;
+  }
+
+  const torEnv = runIdentitySandbox('standard', false, 'tor');
+  assert.equal(torEnv.navigator.userAgent, torProf.ua);
+  assert.equal(torEnv.navigator.appVersion, '5.0 (Windows)');
+  assert.equal(torEnv.navigator.vendor, '');
+  assert.equal(torEnv.navigator.oscpu, 'Windows NT 10.0; Win64; x64');
+  assert.equal(torEnv.navigator.userAgentData, undefined);
+  assert.equal(torEnv.chrome, undefined);
+
+  const zasEnv = runIdentitySandbox('standard', false, 'zaslon');
+  assert.equal(zasEnv.navigator.userAgent, zasProf.ua);
+  assert.equal(zasEnv.navigator.vendor, 'Google Inc.');
+  assert.ok(zasEnv.navigator.userAgentData.brands.some(b => b.brand === 'Zaslon Browser'));
+  assert.notEqual(zasEnv.chrome, undefined);
+
+  const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.ok(mainSrc.includes('getActiveBrowserUserAgent'));
+  assert.ok(mainSrc.includes('applyIdentityToAllSessions'));
+  assert.ok(mainSrc.includes('--zaslon-identity='));
+
+  const uiSrc = fs.readFileSync(path.join(__dirname, '..', 'ui.html'), 'utf8');
+  assert.ok(uiSrc.includes('id="idModeBtn"'));
+  assert.ok(uiSrc.includes('function toggleIdentityMode()'));
+});
+
+test('Onion mode toggles ON -> OFF restoring snapshot; safest DuckDuckGo skips JS SPA/CAPTCHA; plain HTTP onion gateway forces Connection: close & v3 cert handling', async () => {
+  const uiSrc = fs.readFileSync(path.join(__dirname, '..', 'ui.html'), 'utf8');
+  const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const torSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'network', 'tor-manager.js'), 'utf8');
+
+  // 1) UI toggle wiring + Onion OFF restore execution
+  assert.ok(uiSrc.includes('toggleOnionFullSecurityMode()'));
+  assert.ok(uiSrc.includes("'menu.onionOffBadge'"));
+  assert.ok(uiSrc.includes("'toast.onionModeOff'"));
+
+  const keysMatch = uiSrc.match(/const ONION_SNAPSHOT_PRIV_KEYS=[\s\S]*?const ONION_RESTORE_DEFAULTS=[\s\S]*?\};/);
+  const activeHelperMatch = uiSrc.match(/function isOnionFullSecurityActive\(\)\{[\s\S]*?\n\}/);
+  const activateMatch = uiSrc.match(/async function activateOnionFullSecurityMode\(\)\{[\s\S]*?\n\}/);
+  const deactivateMatch = uiSrc.match(/async function deactivateOnionFullSecurityMode\(\)\{[\s\S]*?\n\}/);
+  const toggleMatch = uiSrc.match(/function toggleOnionFullSecurityMode\(\)\{[\s\S]*?\n\}/);
+  assert.ok(keysMatch && activeHelperMatch && activateMatch && deactivateMatch && toggleMatch);
+
+  const lsMap = new Map();
+  const fakeLS = {
+    getItem: k => (lsMap.has(k) ? lsMap.get(k) : null),
+    setItem: (k, v) => lsMap.set(k, String(v)),
+    removeItem: k => lsMap.delete(k)
+  };
+  let stopTorCalls = 0;
+  const dpiCalls = [];
+  const dohCalls = [];
+  const navigated = [];
+  const fakeView = { classList: { contains: () => true, remove: () => {} } };
+  const onionTab = { id: 1, container: 'Banka/İş', url: 'http://2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion/', view: fakeView };
+  const S = {
+    priv: {
+      dpi: false, dpiMode: 'builtin', dpiSplitProfile: 'sni-frag',
+      dohEnabled: true, dohProvider: 'cloudflare', dohStrict: false,
+      adblock: true, tele: true, fp: true, popups: true, block3pCookies: false,
+      letterbox: false, clearTabOnClose: false, clearOnExit: false, clearTorDataOnExit: false,
+      httpsOnly: false, userscriptsEnabled: true, securityLevel: 'standard', identityMode: 'tor',
+      metaSearchRequireTor: false, metaSearchRouting: 'tab', trRouting: 'tab', whitelist: []
+    },
+    container: 'Banka/İş',
+    tabs: [onionTab],
+    netStatus: { tor: { state: 'stopped', connected: false } },
+    inspector: {}
+  };
+
+  const toggleFn = new Function(
+    'S', 'Z', 'localStorage', 'cur', 'host', 'normCont', 'save', 'navigate', 'newTab',
+    'updateShieldBadge', 'updateNetworkBadges', 'refreshInspectorForActive', 'renderPanel', 'toast', 't',
+    `let panel = '';
+    ${keysMatch[0]}
+    ${activeHelperMatch[0]}
+    ${activateMatch[0]}
+    ${deactivateMatch[0]}
+    ${toggleMatch[0]}
+    return toggleOnionFullSecurityMode;`
+  )(
+    S,
+    {
+      toggleDpi: async opts => { dpiCalls.push(opts); return { enabled: !!opts.enabled }; },
+      configureDoh: async opts => { dohCalls.push(opts); return opts; },
+      startTor: async () => { S.netStatus.tor = { state: 'connected', connected: true }; return S.netStatus.tor; },
+      stopTor: async () => { stopTorCalls++; S.netStatus.tor = { state: 'stopped', connected: false }; return S.netStatus.tor; },
+      close: () => {}
+    },
+    fakeLS,
+    () => onionTab,
+    u => new URL(u).hostname,
+    c => c,
+    () => {},
+    (tb, url, push) => navigated.push({ id: tb.id, container: tb.container, url, push }),
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    k => k
+  );
+
+  await toggleFn();
+  assert.equal(S.priv.securityLevel, 'safest');
+  assert.equal(S.container, '🧅 Tor Zırhlı');
+  assert.ok(lsMap.has('zas_onion_prev'));
+  S.netStatus.tor = { state: 'connected', connected: true };
+
+  await toggleFn();
+  assert.equal(stopTorCalls, 1);
+  assert.equal(S.priv.securityLevel, 'standard');
+  assert.equal(S.priv.dpi, false);
+  assert.equal(S.priv.dohStrict, false);
+  assert.equal(S.priv.dohProvider, 'cloudflare');
+  assert.equal(S.priv.letterbox, false);
+  assert.equal(S.priv.userscriptsEnabled, true);
+  assert.equal(S.container, 'Banka/İş');
+  assert.equal(lsMap.has('zas_onion_prev'), false);
+  assert.deepEqual(navigated[navigated.length - 1], {
+    id: 1,
+    container: 'Banka/İş',
+    url: 'zaslon://newtab',
+    push: false
+  });
+
+  // 2) DuckDuckGo in safest resolves to non-JS html/lite without triggering 202 CAPTCHA
+  const ddgNormMatch = uiSrc.match(/function normalizeDdgForSafest\(u\)\{[\s\S]*?\n\}/);
+  const resolveMatch = uiSrc.match(/function resolve\(input\)\{[\s\S]*?\n\}/);
+  assert.ok(ddgNormMatch && resolveMatch);
+  const resolveSafest = new Function(`
+    const ENGINES = { 'DuckDuckGo': 'https://duckduckgo.com/?q=', 'Zaslon Meta': 'zaslon://search?q=' };
+    const BANGS = { '!d': ['DuckDuckGo', 'https://duckduckgo.com/?q='] };
+    const S = { set: { engine: 'DuckDuckGo' }, priv: { securityLevel: 'safest' } };
+    const sanitize = u => u;
+    ${ddgNormMatch[0]}
+    ${resolveMatch[0]}
+    return resolve;
+  `)();
+  assert.equal(resolveSafest('privacy'), 'https://html.duckduckgo.com/html/?q=privacy');
+  assert.equal(resolveSafest('!d tor browser'), 'https://html.duckduckgo.com/html/?q=tor%20browser');
+  assert.equal(resolveSafest('https://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion/?q=test'), 'https://html.duckduckgo.com/html/?q=test');
+
+  // 3) main.js + tor-manager.js guards for DDG Onion-Location loop, v3 .onion cert + HTTP fallback, and plain HTTP Connection: close
+  assert.ok(mainSrc.includes("!(prefs.securityLevel === 'safest' && /^https:\\/\\/(html|lite)\\.duckduckgo\\.com(\\/|$)/i.test(details.url || ''))"));
+  assert.ok(mainSrc.includes("app.on('certificate-error'"));
+  assert.ok(mainSrc.includes('onionHttpFallbackTried'));
+  assert.ok(mainSrc.includes('applyNetworkProxiesToAllSessions()'));
+  assert.ok(torSrc.includes("filtered.push('Connection: close')"));
+});
