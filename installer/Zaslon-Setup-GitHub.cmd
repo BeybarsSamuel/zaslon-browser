@@ -1,20 +1,32 @@
-﻿<#
-.SYNOPSIS
-  Zaslon Browser — GitHub Bootstrapper / Setup Installer
-  Public veya Private GitHub deposundan en son Zaslon Browser surumunu cekip
-  bilgisayardaki Program Files (veya secilen) dizinine kurar, Masaustu + Baslat
-  Menusu kisayollarini ve Windows Arama/App Paths kayitlarini Chrome gibi ekler.
+@echo off & goto :__ZASLON_BATCH__
+<#
+:__ZASLON_BATCH__
+chcp 65001 >nul
+title Zaslon Browser - GitHub Kurulum Sihirbazi
+set "ZASLON_CMD_PATH=%~f0"
+set "ZASLON_ARG_DIR=%~1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$c=[System.IO.File]::ReadAllText($env:ZASLON_CMD_PATH,[System.Text.Encoding]::UTF8); $i=$c.IndexOf('<#'); if($i -lt 0){throw 'Script header missing'}; Invoke-Expression ($c.Substring($i))"
+set "ZASLON_EC=%ERRORLEVEL%"
+if not "%ZASLON_EC%"=="0" (
+    echo.
+    echo Kurulum bir hata ile sonlandi ^(Kod: %ZASLON_EC%^).
+    pause
+)
+exit /b %ZASLON_EC%
 #>
 
-[CmdletBinding()]
-param(
-    [string]$Repo = "",
-    [string]$Token = "",
-    [string]$InstallDir = "$env:ProgramFiles\Zaslon Browser"
-)
+# ============================================================================
+# Zaslon Browser — Tek Dosya GitHub Kurulum Sihirbazi (.cmd)
+# Public veya Private GitHub deposundan (PAT ile) en guncel surumu indirir,
+# Program Files'a kurar, Masaustu & Baslat Menusu (Windows Arama) ekler.
+# ============================================================================
 
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+
+$InstallDir = if (-not [string]::IsNullOrWhiteSpace($env:ZASLON_ARG_DIR)) { $env:ZASLON_ARG_DIR.Trim() } else { "$env:ProgramFiles\Zaslon Browser" }
+$SkipDirPrompt = -not [string]::IsNullOrWhiteSpace($env:ZASLON_ARG_DIR)
+$SelfCmdPath = $env:ZASLON_CMD_PATH
 
 function Normalize-GitHubRepo([string]$raw) {
     $s = ($raw -as [string]).Trim()
@@ -51,13 +63,11 @@ function New-Shortcut([string]$ShortcutPath, [string]$TargetPath, [string]$Worki
 function Register-WindowsApp([string]$ExePath, [string]$DirPath, [string]$VersionStr, [bool]$MachineWide) {
     $hive = if ($MachineWide) { "HKLM:" } else { "HKCU:" }
 
-    # 1. Windows Search ve Win+R icin App Paths
     $appPathsKey = "$hive\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\Zaslon Browser.exe"
     New-Item -Path $appPathsKey -Force | Out-Null
     Set-ItemProperty -Path $appPathsKey -Name "(Default)" -Value $ExePath
     Set-ItemProperty -Path $appPathsKey -Name "Path" -Value $DirPath
 
-    # 2. Windows Tarayici Kaydi (StartMenuInternet & RegisteredApplications)
     $browserRoot = "$hive\SOFTWARE\Clients\StartMenuInternet\Zaslon Browser"
     New-Item -Path "$browserRoot\DefaultIcon" -Force | Out-Null
     New-Item -Path "$browserRoot\shell\open\command" -Force | Out-Null
@@ -79,10 +89,9 @@ function Register-WindowsApp([string]$ExePath, [string]$DirPath, [string]$Versio
     New-Item -Path "$progId\DefaultIcon" -Force | Out-Null
     New-Item -Path "$progId\shell\open\command" -Force | Out-Null
     Set-ItemProperty -Path $progId -Name "(Default)" -Value "Zaslon Browser Web Document"
-    Set-ItemProperty -Path "$progId\DefaultIcon" -Name "(Default)" -Value "$ExePath,0"
-    Set-ItemProperty -Path "$progId\shell\open\command" -Name "(Default)" -Value "`"$ExePath`" `"%1`""
+    Set-ItemProperty -Path $progId\DefaultIcon -Name "(Default)" -Value "$ExePath,0"
+    Set-ItemProperty -Path $progId\shell\open\command -Name "(Default)" -Value "`"$ExePath`" `"%1`""
 
-    # 3. Portable/Zip kurulumlarinda Windows Ayarlar > Yuklu Uygulamalar gorunurlugu (NSIS zaten kendi olusturur)
     $uninstKey = "$hive\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\org.zaslon.browser"
     $existingNsisUninst = Get-ChildItem "$hive\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall" -ErrorAction SilentlyContinue |
                           Where-Object { (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).DisplayName -eq "Zaslon Browser" }
@@ -144,51 +153,11 @@ Write-Host "   ZASLON BROWSER - GitHub Kurulum Sihirbazi" -ForegroundColor Cyan
 Write-Host "=====================================================" -ForegroundColor Cyan
 Write-Host ""
 
-if ([string]::IsNullOrWhiteSpace($Repo)) {
-    $defaultRepo = "BeybarsSamuel/zaslon-browser"
-    $rawRepo = Read-Host "GitHub Repo [$defaultRepo]"
-    if ([string]::IsNullOrWhiteSpace($rawRepo)) { $rawRepo = $defaultRepo }
-    $Repo = Normalize-GitHubRepo $rawRepo
-} else {
-    $Repo = Normalize-GitHubRepo $Repo
-}
-
-if ([string]::IsNullOrWhiteSpace($Repo)) {
-    Write-Host "[HATA] Gecerli bir GitHub deposu girilmedi." -ForegroundColor Red
-    exit 1
-}
-
-if ([string]::IsNullOrWhiteSpace($Token)) {
-    $ghToken = ""
-    if (Get-Command gh -ErrorAction SilentlyContinue) {
-        try {
-            $ghToken = (gh auth token 2>$null | Out-String).Trim()
-        } catch {}
+if (-not $SkipDirPrompt) {
+    $customDir = Read-Host "Kurulum Klasoru [$InstallDir]"
+    if (-not [string]::IsNullOrWhiteSpace($customDir)) {
+        $InstallDir = $customDir.Trim()
     }
-
-    if (-not [string]::IsNullOrWhiteSpace($ghToken)) {
-        $useGh = Read-Host "GitHub CLI (gh) oturumu bulundu. Private erisim icin kullanilsin mi? (E/h) [E]"
-        if ($useGh -eq "" -or $useGh -match '^[EeYy]') {
-            $Token = $ghToken
-        }
-    }
-
-    if ([string]::IsNullOrWhiteSpace($Token)) {
-        $secTok = Read-Host "Private repo ise GitHub PAT Token girin (Public ise bos birakip Enter)" -AsSecureString
-        if ($secTok -and $secTok.Length -gt 0) {
-            $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secTok)
-            try {
-                $Token = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
-            } finally {
-                [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
-            }
-        }
-    }
-}
-
-$customDir = Read-Host "Kurulum Klasoru [$InstallDir]"
-if (-not [string]::IsNullOrWhiteSpace($customDir)) {
-    $InstallDir = $customDir.Trim()
 }
 
 $needsAdmin = $InstallDir.StartsWith($env:ProgramFiles, [System.StringComparison]::OrdinalIgnoreCase) -or
@@ -197,18 +166,41 @@ $needsAdmin = $InstallDir.StartsWith($env:ProgramFiles, [System.StringComparison
 if ($needsAdmin -and -not (Test-IsAdmin)) {
     Write-Host ""
     Write-Host "[BILGI] '$InstallDir' dizinine kurulum icin Yonetici (UAC) izni isteniyor..." -ForegroundColor Yellow
-    $argList = @(
-        "-NoProfile",
-        "-ExecutionPolicy", "Bypass",
-        "-File", "`"$PSCommandPath`"",
-        "-Repo", "`"$Repo`"",
-        "-InstallDir", "`"$InstallDir`""
-    )
-    if (-not [string]::IsNullOrWhiteSpace($Token)) {
-        $argList += @("-Token", "`"$Token`"")
-    }
-    $proc = Start-Process -FilePath "powershell.exe" -ArgumentList $argList -Verb RunAs -PassThru -Wait
+    $proc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"`"$SelfCmdPath`" `"$InstallDir`"`"" -Verb RunAs -PassThru -Wait
     exit $proc.ExitCode
+}
+
+$defaultRepo = "BeybarsSamuel/zaslon-browser"
+$rawRepo = Read-Host "GitHub Repo [$defaultRepo]"
+if ([string]::IsNullOrWhiteSpace($rawRepo)) { $rawRepo = $defaultRepo }
+$Repo = Normalize-GitHubRepo $rawRepo
+
+if ([string]::IsNullOrWhiteSpace($Repo)) {
+    Write-Host "[HATA] Gecerli bir GitHub deposu girilmedi." -ForegroundColor Red
+    exit 1
+}
+
+$Token = ""
+if (Get-Command gh -ErrorAction SilentlyContinue) {
+    try {
+        $ghTok = (gh auth token 2>$null | Out-String).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($ghTok)) {
+            $useGh = Read-Host "GitHub CLI (gh) oturumu bulundu. Private erisim icin kullanilsin mi? (E/h) [E]"
+            if ($useGh -eq "" -or $useGh -match '^[EeYy]') { $Token = $ghTok }
+        }
+    } catch {}
+}
+
+if ([string]::IsNullOrWhiteSpace($Token)) {
+    $secTok = Read-Host "Private repo icin GitHub PAT Token girin (Public ise Enter)" -AsSecureString
+    if ($secTok -and $secTok.Length -gt 0) {
+        $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secTok)
+        try {
+            $Token = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+        } finally {
+            [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+        }
+    }
 }
 
 Write-Host ""
@@ -221,7 +213,7 @@ try {
     Write-Host "      Depo erisimi basarili ($vis)." -ForegroundColor Green
 } catch {
     Write-Host "[HATA] GitHub deposuna erisilemedi: $($_.Exception.Message)" -ForegroundColor Red
-    Write-Host "       Private repo kullaniyorsaniz 'repo' yetkili bir GitHub PAT Token girin." -ForegroundColor Yellow
+    Write-Host "       Private repo icin gecerli bir GitHub PAT Token gerekir." -ForegroundColor Yellow
     exit 1
 }
 
@@ -296,7 +288,6 @@ try {
         Copy-Item -Path $assetOut -Destination $targetExe -Force
     }
 
-    # Uygulama ici guncelleyicinin repo adini hazir gormesi icin tohum dosyasi (PAT token yazilmaz!)
     $seedJson = @{ repo = $Repo } | ConvertTo-Json
     Set-Content -Path (Join-Path $InstallDir "zaslon-github.json") -Value $seedJson -Encoding UTF8
 
@@ -323,6 +314,8 @@ try {
     Write-Host "[TAMAM] Zaslon Browser basariyla kuruldu: $InstallDir" -ForegroundColor Green
     Write-Host "        - Masaustu kisayolu ve Baslat Menusu (Windows Arama) eklendi." -ForegroundColor Gray
     Write-Host "        - Ayarlar > Hakkinda altindan istediginiz zaman guncellemeleri denetleyebilirsiniz." -ForegroundColor Gray
+    Write-Host ""
+    Read-Host "Cikmak icin Enter'a basin" | Out-Null
 } finally {
     if (Test-Path $tempDir) {
         Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
