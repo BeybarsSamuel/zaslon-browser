@@ -1,0 +1,60 @@
+name: Release Desktop (Windows)
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - 'desktop-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (ornek: v1.0.1)'
+        required: true
+        default: 'v1.0.1'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Build Windows Setup & Portable
+        run: npm run dist
+
+      - name: Generate SHA256SUMS
+        working-directory: dist
+        shell: pwsh
+        run: |
+          $files = @("Zaslon-Setup.exe", "Zaslon-Portable.exe") | Where-Object { Test-Path $_ }
+          $lines = foreach ($f in $files) {
+            $h = (Get-FileHash -Path $f -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$h  $f"
+          }
+          Set-Content -Path "SHA256SUMS.txt" -Value $lines -Encoding ASCII
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          files: |
+            dist/Zaslon-Setup.exe
+            dist/Zaslon-Portable.exe
+            dist/SHA256SUMS.txt

@@ -1,0 +1,79 @@
+{
+  "name": "zaslon-browser",
+  "version": "1.0.0",
+  "description": "Zaslon Browser — 6 Zırh Katmanlı, Tor Devre İzolasyonlu, DPI Aşıcılı ve AES-256-GCM Şifreli Yerel Tarayıcı",
+  "author": "Zaslon Privacy Team",
+  "license": "MIT",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "dist": "electron-builder --win portable nsis",
+    "dist:portable": "electron-builder --win portable",
+    "dist:setup": "electron-builder --win nsis"
+  },
+  "dependencies": {
+    "@ghostery/adblocker-electron": "^2.20.3",
+    "@mkljczk/bergamot-translator": "^0.4.16",
+    "cross-fetch": "^4.1.0",
+    "darkreader": "^4.9.135",
+    "ffmpeg-static": "^5.3.0"
+  },
+  "devDependencies": {
+    "electron": "^45.3.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "org.zaslon.browser",
+    "productName": "Zaslon Browser",
+    "copyright": "Copyright © 2026 Zaslon Browser",
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/@mkljczk/bergamot-translator/worker/**",
+      "src/tools/bergamot-worker-shim.cjs"
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "resources"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "page-preload.js",
+      "ui.html",
+      "src/**/*",
+      "resources/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/bin",
+        "to": "bin",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "icon": "resources/icon.ico",
+      "target": [
+        "portable",
+        "nsis"
+      ]
+    },
+    "portable": {
+      "artifactName": "Zaslon-Portable.exe"
+    },
+    "nsis": {
+      "artifactName": "Zaslon-Setup.exe",
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "menuCategory": false,
+      "shortcutName": "Zaslon Browser",
+      "include": "build/installer.nsh"
+    }
+  }
+}

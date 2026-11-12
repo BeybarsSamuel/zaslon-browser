@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.log
+.env
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+zaslon-vault.enc.json
