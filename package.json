@@ -1,6 +1,6 @@
 {
   "name": "zaslon-browser",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Zaslon Browser — 6 Zırh Katmanlı, Tor Devre İzolasyonlu, DPI Aşıcılı ve AES-256-GCM Şifreli Yerel Tarayıcı",
   "author": "Zaslon Privacy Team",
   "license": "MIT",
@@ -8,6 +8,7 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test test/*.test.js",
+    "build:win": "electron-builder --win portable nsis",
     "dist": "electron-builder --win portable nsis",
     "dist:portable": "electron-builder --win portable",
     "dist:setup": "electron-builder --win nsis"
@@ -73,6 +74,9 @@
       "createStartMenuShortcut": true,
       "menuCategory": false,
       "shortcutName": "Zaslon Browser",
+      "installerIcon": "resources/icon.ico",
+      "uninstallerIcon": "resources/icon.ico",
+      "installerHeaderIcon": "resources/icon.ico",
       "include": "build/installer.nsh"
     }
   }

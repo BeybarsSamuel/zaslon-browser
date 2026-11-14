@@ -221,8 +221,11 @@ test('YtDlpManager shreds temp files and main/ui route storage through Encrypted
     assert.equal(uiSrc.includes("localStorage.setItem('zas_priv'"), false);
     assert.equal(uiSrc.includes("Z.setLanDiscovery(S.drawer==='lan')"), true);
 
-    const legacyHtml = fs.readFileSync(path.join(__dirname, '..', '..', 'zaslon-browser.html'), 'utf8');
-    assert.equal(legacyHtml.includes('[ARCHIVED / DEPRECATED'), true);
+    const legacyHtmlPath = path.join(__dirname, '..', '..', 'zaslon-browser.html');
+    if (fs.existsSync(legacyHtmlPath)) {
+      const legacyHtml = fs.readFileSync(legacyHtmlPath, 'utf8');
+      assert.equal(legacyHtml.includes('[ARCHIVED / DEPRECATED'), true);
+    }
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }

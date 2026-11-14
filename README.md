@@ -100,13 +100,23 @@ zaslon-browser/
 
 ## Getting Started
 
-### Prerequisites
+### Direct Download (Windows)
+
+Download the latest Windows installer (`Zaslon-Setup.exe`) or portable executable (`Zaslon-Portable.exe`) from **[GitHub Releases](https://github.com/BeybarsSamuel/zaslon-browser/releases/latest)**:
+
+- **`Zaslon-Setup.exe`** — Standard Windows setup wizard (supports per-user or system-wide installation, Start Menu & Desktop shortcuts, Windows Search registration, and uninstaller).
+- **`Zaslon-Portable.exe`** — Single-file portable build requiring no installation.
+- **`SHA256SUMS.txt`** — SHA-256 checksums for verifying binary integrity.
+
+### Building from Source
+
+#### Prerequisites
 
 - Node.js 18.x, 20.x, or 22.x
 - npm 9.x or higher
 - Git
 
-### Installation
+#### Installation
 
 Clone the repository and install dependencies:
 

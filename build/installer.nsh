@@ -16,6 +16,7 @@
   WriteRegStr SHELL_CONTEXT "SOFTWARE\Classes\ZaslonHTML" "" "Zaslon Browser Web Document"
   WriteRegStr SHELL_CONTEXT "SOFTWARE\Classes\ZaslonHTML\DefaultIcon" "" "$INSTDIR\Zaslon Browser.exe,0"
   WriteRegStr SHELL_CONTEXT "SOFTWARE\Classes\ZaslonHTML\shell\open\command" "" '"$INSTDIR\Zaslon Browser.exe" "%1"'
+  System::Call 'shell32.dll::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
 !macroend
 
 !macro customUnInstall
@@ -23,4 +24,5 @@
   DeleteRegKey SHELL_CONTEXT "SOFTWARE\Clients\StartMenuInternet\Zaslon Browser"
   DeleteRegValue SHELL_CONTEXT "SOFTWARE\RegisteredApplications" "Zaslon Browser"
   DeleteRegKey SHELL_CONTEXT "SOFTWARE\Classes\ZaslonHTML"
+  System::Call 'shell32.dll::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
 !macroend
