@@ -8,10 +8,10 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test test/*.test.js",
-    "build:win": "electron-builder --win portable nsis",
-    "dist": "electron-builder --win portable nsis",
-    "dist:portable": "electron-builder --win portable",
-    "dist:setup": "electron-builder --win nsis"
+    "build:win": "electron-builder --win portable nsis --publish never",
+    "dist": "electron-builder --win portable nsis --publish never",
+    "dist:portable": "electron-builder --win portable --publish never",
+    "dist:setup": "electron-builder --win nsis --publish never"
   },
   "dependencies": {
     "@ghostery/adblocker-electron": "^2.20.3",
